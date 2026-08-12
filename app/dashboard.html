@@ -47,7 +47,7 @@
     button:disabled { cursor: not-allowed; opacity: .45; }
     .resolve-status { min-height: 18px; margin-top: 7px; color: #9eabbd; font-size: 12px; }
     .resolve-status.success { color: #42d392; }
-    .job { display: grid; grid-template-columns: 1fr 1.3fr .7fr .9fr 1.5fr .6fr; gap: 14px; padding: 14px; border-bottom: 1px solid #252d3c; align-items: center; }
+    .job { display: grid; grid-template-columns: 1fr 1.2fr .7fr .8fr .8fr 1.4fr .6fr; gap: 12px; padding: 14px; border-bottom: 1px solid #252d3c; align-items: center; }
     .job:first-child { border-top: 1px solid #252d3c; }
     .job span { overflow-wrap: anywhere; font-size: 13px; }
     .job .muted { color: #8f9bad; }
@@ -147,14 +147,16 @@
     const row = document.createElement('div'); row.className = 'job';
     const channel = document.createElement('strong'); channel.textContent = job.channel_name;
     const video = document.createElement('span'); video.textContent = job.video_title || job.video_id;
-    const jobError = job.download_error || job.error;
+    const jobError = job.process_error || job.download_error || job.error;
     const status = document.createElement('span'); status.textContent = jobError ? `${job.status}: ${jobError}` : job.status;
     if (job.status === 'FAILED') status.className = 'failed';
     const download = document.createElement('span'); download.className = 'muted';
     download.textContent = job.download_state ? `${job.download_state}${job.download_progress ? ` ${Math.round(job.download_progress)}%` : ''}` : '—';
+    const processing = document.createElement('span'); processing.className = 'muted';
+    processing.textContent = job.process_state ? `${job.process_state}${job.process_progress ? ` ${Math.round(job.process_progress)}%` : ''}` : '—';
     const output = document.createElement('span'); output.className = 'muted'; output.textContent = job.output_dir || '—';
     const created = document.createElement('span'); created.className = 'muted'; created.textContent = formatTime(job.created_at);
-    row.append(channel, video, status, download, output, created); return row;
+    row.append(channel, video, status, download, processing, output, created); return row;
   }
 
   async function refresh() {

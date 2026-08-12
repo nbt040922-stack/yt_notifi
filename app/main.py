@@ -16,6 +16,7 @@ from .config import Settings
 from .detector import resume_notifications
 from .download_worker import DownloadHandoffWorker
 from .poller import ChannelPoller
+from .process_worker import ProcessHandoffWorker
 from .state import StateStore
 from .telegram import TelegramNotifier
 
@@ -74,6 +75,7 @@ def create_app(
         channels = []
     poller = ChannelPoller(settings, state, notifier, channels, channel_loader=channel_store.enabled)
     download_worker = DownloadHandoffWorker(settings, state)
+    process_worker = ProcessHandoffWorker(settings, state)
 
     async def notification_retry_loop() -> None:
         while True:
@@ -93,6 +95,7 @@ def create_app(
                 asyncio.create_task(notification_retry_loop()),
                 asyncio.create_task(poller.run(stop)),
                 asyncio.create_task(download_worker.run(stop)),
+                asyncio.create_task(process_worker.run(stop)),
             ]
             if settings.enable_background_tasks else []
         )

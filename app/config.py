@@ -28,6 +28,7 @@ class Settings:
     nas_output_root: Path | None = None
     ytdownload_bridge_url: str = "http://127.0.0.1:8790"
     processing_work_root: Path | None = None
+    silence_cutter_bridge_url: str = "http://127.0.0.1:8791"
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -47,6 +48,7 @@ class Settings:
             nas_output_root=Path(nas_output_root) if nas_output_root else None,
             ytdownload_bridge_url=os.getenv("YTDOWNLOAD_BRIDGE_URL", "http://127.0.0.1:8790").rstrip("/"),
             processing_work_root=Path(processing_work_root) if processing_work_root else None,
+            silence_cutter_bridge_url=os.getenv("SILENCE_CUTTER_BRIDGE_URL", "http://127.0.0.1:8791").rstrip("/"),
         )
 
 

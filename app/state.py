@@ -89,7 +89,14 @@ class StateStore:
                     download_error TEXT,
                     updated_at TEXT,
                     download_attempts INTEGER NOT NULL DEFAULT 0,
-                    next_download_attempt_at TEXT
+                    next_download_attempt_at TEXT,
+                    process_external_id TEXT,
+                    process_state TEXT,
+                    process_progress REAL NOT NULL DEFAULT 0,
+                    processed_file_path TEXT,
+                    process_error TEXT,
+                    process_attempts INTEGER NOT NULL DEFAULT 0,
+                    next_process_attempt_at TEXT
                 )"""
             )
             job_columns = {row[1] for row in db.execute("PRAGMA table_info(processing_jobs)")}
@@ -102,6 +109,13 @@ class StateStore:
                 "updated_at": "TEXT",
                 "download_attempts": "INTEGER NOT NULL DEFAULT 0",
                 "next_download_attempt_at": "TEXT",
+                "process_external_id": "TEXT",
+                "process_state": "TEXT",
+                "process_progress": "REAL NOT NULL DEFAULT 0",
+                "processed_file_path": "TEXT",
+                "process_error": "TEXT",
+                "process_attempts": "INTEGER NOT NULL DEFAULT 0",
+                "next_process_attempt_at": "TEXT",
             }
             for name, sql_type in job_additions.items():
                 if name not in job_columns:
@@ -202,6 +216,40 @@ class StateStore:
                    WHERE id=?""",
                 (status, external_id, download_state, progress, downloaded_file_path,
                  download_error, utc_now(), attempts, next_attempt_at, job_id),
+            )
+
+    def process_jobs_due(self, now: str) -> list[sqlite3.Row]:
+        with self._connect() as db:
+            return list(db.execute(
+                """SELECT * FROM processing_jobs
+                   WHERE status IN ('DOWNLOADED', 'PROCESS_PENDING', 'PROCESSING')
+                     AND (next_process_attempt_at IS NULL OR next_process_attempt_at <= ?)
+                   ORDER BY id""",
+                (now,),
+            ))
+
+    def update_process_job(
+        self,
+        job_id: int,
+        *,
+        status: str,
+        external_id: str | None = None,
+        process_state: str | None = None,
+        progress: float = 0,
+        processed_file_path: str | None = None,
+        process_error: str | None = None,
+        attempts: int = 0,
+        next_attempt_at: str | None = None,
+    ) -> None:
+        with self._connect() as db:
+            db.execute(
+                """UPDATE processing_jobs SET status=?,
+                   process_external_id=COALESCE(?, process_external_id), process_state=?,
+                   process_progress=?, processed_file_path=COALESCE(?, processed_file_path),
+                   process_error=?, updated_at=?, process_attempts=?, next_process_attempt_at=?
+                   WHERE id=?""",
+                (status, external_id, process_state, progress, processed_file_path,
+                 process_error, utc_now(), attempts, next_attempt_at, job_id),
             )
 
     def get_poll_state(self, channel_id: str) -> sqlite3.Row | None:
