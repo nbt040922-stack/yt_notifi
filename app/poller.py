@@ -6,6 +6,7 @@ import logging
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Callable
 
 from .config import CHANNEL_ID_RE, Channel, Settings, enabled_channels, find_ytdlp
 from .detector import VIDEO_ID_RE, handle_detected_video
@@ -70,15 +71,27 @@ class ChannelPoller:
         notifier: TelegramNotifier,
         channels: list[Channel] | None = None,
         runner=subprocess.run,
+        channel_loader: Callable[[], list[Channel]] | None = None,
     ):
         self.settings = settings
         self.state = state
         self.notifier = notifier
-        self.channels = channels if channels is not None else enabled_channels(settings.channels_file)
-        self.names = {channel.channel_id: channel.name for channel in self.channels}
+        self.channel_loader = channel_loader or (lambda: enabled_channels(settings.channels_file) if channels is None else channels)
+        self.channels: list[Channel] = []
+        self.names: dict[str, str] = {}
+        self.refresh_channels()
         self.executable = find_ytdlp(settings)
         self.runner = runner
         self.semaphore = asyncio.Semaphore(settings.poll_max_concurrency)
+
+    def refresh_channels(self) -> None:
+        try:
+            channels = self.channel_loader()
+        except Exception as exc:
+            logger.error("CHANNEL_CONFIG_FAILED error_type=%s", type(exc).__name__)
+            return
+        self.channels = channels
+        self.names = {channel.channel_id: channel.name for channel in channels}
 
     def poll_channel(self, channel: Channel) -> list[tuple[VideoEvent, str]]:
         logger.debug("POLL_START channel_id=%s", channel.channel_id)
@@ -116,6 +129,7 @@ class ChannelPoller:
                 return []
 
     async def poll_once(self, *, force: bool = True) -> list[tuple[Channel, list[tuple[VideoEvent, str]]]]:
+        self.refresh_channels()
         if not self.executable:
             logger.warning("POLL_FAILED yt-dlp unavailable")
             return []

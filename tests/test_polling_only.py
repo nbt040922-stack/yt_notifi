@@ -23,13 +23,15 @@ def event(video_id: str = VIDEO_ID) -> VideoEvent:
     return VideoEvent(video_id, CHANNEL_ID, "Video", "2026-08-12T00:00:00Z", "", f"https://youtu.be/{video_id}")
 
 
-def test_health_is_only_production_route_and_has_no_secrets(settings):
+def test_health_has_no_secrets_or_public_webhook(settings):
     app = create_app(settings)
     routes = {(route.path, method) for route in app.routes for method in getattr(route, "methods", set())}
     response = TestClient(app).get("/health")
     assert response.json() == {"status": "ok", "service": "YT_NOTIFI", "enabled_channels": 1}
     assert "secret-token" not in response.text
-    assert {path for path, _ in routes} == {"/health"}
+    paths = {path for path, _ in routes}
+    assert "/health" in paths
+    assert not any("websub" in path or "callback" in path for path in paths)
 
 
 def test_backend_startup_fails_without_ytdlp(monkeypatch, settings):

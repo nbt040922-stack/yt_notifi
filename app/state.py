@@ -118,6 +118,16 @@ class StateStore:
         with self._connect() as db:
             return list(db.execute("SELECT * FROM channel_poll_state ORDER BY channel_id"))
 
+    def reset_poll_baseline(self, channel_id: str) -> None:
+        with self._connect() as db:
+            db.execute(
+                """INSERT INTO channel_poll_state (channel_id, initialized, consecutive_failures)
+                   VALUES (?, 0, 0)
+                   ON CONFLICT(channel_id) DO UPDATE SET initialized=0, last_error=NULL,
+                     consecutive_failures=0, next_poll_at=NULL""",
+                (channel_id,),
+            )
+
     def record_poll_success(self, channel_id: str, latest_video_id: str | None, initialized: bool = True) -> bool:
         now = utc_now()
         previous = self.get_poll_state(channel_id)

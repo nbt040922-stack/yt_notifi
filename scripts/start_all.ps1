@@ -51,6 +51,7 @@ try {
     if ($health -ne "OK") { throw "Watcher health failed: $health. See logs\watcher.stderr.log" }
     Write-Host "Watcher       OK"
     Write-Host "`nPolling       $pollInterval seconds"
+    Write-Host "Dashboard     http://127.0.0.1:8787/"
     Write-Host "Status        RUNNING"
     Write-Host "`nPress Ctrl+C to stop."
     Write-LauncherLog $launcherLog "watcher health PASS"

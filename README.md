@@ -1,6 +1,6 @@
 # YT_NOTIFI
 
-Dịch vụ Windows theo dõi video YouTube mới bằng `yt-dlp`, chống trùng bằng SQLite và gửi Telegram đúng một lần. Không cần YouTube API key, WebSub, Cloudflare hay VPS.
+Dịch vụ Windows theo dõi video YouTube mới bằng `yt-dlp`, chống trùng bằng SQLite và gửi Telegram đúng một lần. Dashboard cục bộ quản lý kênh không cần sửa JSON hoặc restart. Không cần YouTube API key, WebSub, Cloudflare hay VPS.
 
 ## Kiến trúc
 
@@ -43,6 +43,23 @@ POLL_MAX_CONCURRENCY=3
 
 ## Kênh theo dõi
 
+Sau khi chạy dịch vụ, mở:
+
+```text
+http://127.0.0.1:8787/
+```
+
+Dashboard cho phép:
+
+- thêm bằng Channel ID hoặc URL `https://youtube.com/channel/UC...`
+- bật, tắt hoặc xóa kênh không cần restart
+- xem poll gần nhất, lần thành công, video gần nhất và số lỗi
+- xem trạng thái watcher, yt-dlp, Telegram và số kênh đang bật
+
+Khi thêm hoặc bật lại kênh, poll thành công đầu tiên tạo baseline. Video đã có hoặc xuất hiện trong thời gian kênh bị tắt không gửi Telegram bù. Lịch sử SQLite vẫn được giữ khi tắt hoặc xóa.
+
+Có thể sửa trực tiếp `config/channels.json` nếu cần:
+
 Sửa `config/channels.json`:
 
 ```json
@@ -74,6 +91,7 @@ yt-dlp        OK
 Watcher       OK
 
 Polling       10 seconds
+Dashboard     http://127.0.0.1:8787/
 Status        RUNNING
 ```
 
@@ -103,3 +121,4 @@ Log mới nằm trong `logs/yt_notifi.log` và tập trung vào `POLL_BASELINE`,
 - Độ trễ tính từ lúc video quan sát được công khai, thường gần chu kỳ poll; YouTube có thể trì hoãn hiển thị sau lúc bấm publish.
 - Telegram lỗi tạm thời được retry có giới hạn. SQLite ngăn cùng `video_id` tạo thông báo mới lần hai.
 - Bảng WebSub cũ trong database được giữ nguyên để tránh migration phá dữ liệu, nhưng runtime không còn đọc hoặc ghi bảng đó.
+- Dashboard và API chỉ được phục vụ qua watcher mặc định bind `127.0.0.1`; không đổi `HOST` thành `0.0.0.0` nếu không tự bổ sung bảo vệ truy cập.

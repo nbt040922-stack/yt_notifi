@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>YT_NOTIFI</title>
+  <style>
+    :root { color-scheme: dark; font-family: Inter, system-ui, sans-serif; background: #0b0d12; color: #edf1f7; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; background: radial-gradient(circle at top, #172033, #0b0d12 48%); }
+    main { width: min(920px, calc(100% - 32px)); margin: 48px auto; }
+    header, .row, .actions, .summary { display: flex; align-items: center; }
+    header { justify-content: space-between; margin-bottom: 28px; }
+    h1 { margin: 0; font-size: 25px; letter-spacing: .08em; }
+    h2 { margin: 38px 0 14px; font-size: 13px; letter-spacing: .14em; color: #9da8b8; }
+    .running, .badge { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; }
+    .dot { width: 9px; height: 9px; border-radius: 50%; background: #42d392; box-shadow: 0 0 12px #42d39299; }
+    .summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; overflow: hidden; border: 1px solid #293142; border-radius: 12px; background: #293142; }
+    .metric { padding: 18px; background: #111620; }
+    .metric span { display: block; color: #8f9bad; font-size: 12px; margin-bottom: 7px; }
+    .metric strong { font-size: 17px; }
+    .toolbar { display: flex; justify-content: space-between; align-items: center; }
+    button { border: 1px solid #344057; border-radius: 8px; background: #171e2b; color: #edf1f7; padding: 9px 13px; cursor: pointer; }
+    button:hover { border-color: #647697; }
+    button.primary { background: #3b6df6; border-color: #3b6df6; }
+    button.danger { color: #ff9ca6; }
+    .channel { border: 1px solid #293142; border-radius: 12px; padding: 20px; margin-bottom: 12px; background: #111620dd; }
+    .row { justify-content: space-between; gap: 18px; }
+    .channel h3 { margin: 0 0 5px; font-size: 17px; }
+    .channel-id { color: #8f9bad; font-family: ui-monospace, monospace; font-size: 13px; overflow-wrap: anywhere; }
+    .badge { margin-top: 11px; color: #aeb8c7; }
+    .badge .dot { width: 7px; height: 7px; }
+    .badge.disabled .dot { background: #697386; box-shadow: none; }
+    .badge.retrying .dot { background: #f0b849; box-shadow: 0 0 10px #f0b84966; }
+    .details { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-top: 20px; padding-top: 16px; border-top: 1px solid #252d3c; }
+    .details span { display: block; color: #7f8a9b; font-size: 11px; margin-bottom: 5px; }
+    .details strong { font-size: 13px; font-weight: 500; overflow-wrap: anywhere; }
+    .actions { gap: 8px; flex-shrink: 0; }
+    .empty, .error { padding: 28px; text-align: center; color: #8f9bad; border: 1px dashed #344057; border-radius: 12px; }
+    .error { color: #ff9ca6; }
+    dialog { width: min(480px, calc(100% - 28px)); border: 1px solid #344057; border-radius: 14px; background: #111620; color: #edf1f7; padding: 24px; }
+    dialog::backdrop { background: #000a; }
+    dialog h3 { margin-top: 0; }
+    label { display: block; color: #aeb8c7; font-size: 13px; margin: 16px 0 6px; }
+    input { width: 100%; border: 1px solid #344057; border-radius: 8px; background: #0b0f17; color: #fff; padding: 11px; }
+    .form-error { min-height: 20px; margin: 12px 0; color: #ff9ca6; font-size: 13px; }
+    .notice { position: fixed; right: 20px; bottom: 20px; background: #183a2d; border: 1px solid #34775d; border-radius: 9px; padding: 11px 15px; display: none; }
+    @media (max-width: 700px) { main { margin-top: 24px; } .summary, .details { grid-template-columns: repeat(2, 1fr); } .row { align-items: flex-start; flex-direction: column; } }
+  </style>
+</head>
+<body>
+<main>
+  <header><h1>YT_NOTIFI</h1><div class="running"><span class="dot"></span><span id="watcher">ĐANG CHẠY</span></div></header>
+  <section class="summary">
+    <div class="metric"><span>Polling</span><strong id="interval">—</strong></div>
+    <div class="metric"><span>yt-dlp</span><strong id="ytdlp">—</strong></div>
+    <div class="metric"><span>Telegram</span><strong id="telegram">—</strong></div>
+    <div class="metric"><span>Kênh đang bật</span><strong id="enabled">—</strong></div>
+  </section>
+  <div class="toolbar"><h2>KÊNH THEO DÕI</h2><button class="primary" id="open-add">+ Thêm kênh</button></div>
+  <div id="channels"></div>
+</main>
+
+<dialog id="add-dialog">
+  <form id="add-form">
+    <h3>Thêm kênh YouTube</h3>
+    <label for="channel-value">Channel ID hoặc URL /channel/</label>
+    <input id="channel-value" required placeholder="UC... hoặc https://youtube.com/channel/UC...">
+    <label for="channel-name">Tên hiển thị (không bắt buộc)</label>
+    <input id="channel-name" placeholder="Tên kênh">
+    <div class="form-error" id="form-error"></div>
+    <div class="actions"><button type="button" id="cancel-add">Hủy</button><button class="primary" type="submit">Thêm kênh</button></div>
+  </form>
+</dialog>
+<div class="notice" id="notice"></div>
+
+<script>
+  const list = document.querySelector('#channels');
+  const dialog = document.querySelector('#add-dialog');
+  const formatTime = value => value ? new Date(value).toLocaleTimeString('vi-VN') : '—';
+  const escapeText = value => String(value ?? '—');
+
+  async function request(url, options) {
+    const response = await fetch(url, options);
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.message || 'Yêu cầu thất bại.');
+    return data;
+  }
+
+  function detail(label, value) {
+    const box = document.createElement('div');
+    const caption = document.createElement('span');
+    const content = document.createElement('strong');
+    caption.textContent = label;
+    content.textContent = escapeText(value);
+    box.append(caption, content);
+    return box;
+  }
+
+  function channelCard(channel) {
+    const card = document.createElement('article');
+    card.className = 'channel';
+    const row = document.createElement('div'); row.className = 'row';
+    const info = document.createElement('div');
+    const title = document.createElement('h3'); title.textContent = channel.name;
+    const id = document.createElement('div'); id.className = 'channel-id'; id.textContent = channel.channel_id;
+    const badge = document.createElement('div');
+    badge.className = `badge ${channel.enabled ? (channel.failures ? 'retrying' : '') : 'disabled'}`;
+    const dot = document.createElement('span'); dot.className = 'dot';
+    const status = document.createElement('span'); status.textContent = channel.status;
+    badge.append(dot, status); info.append(title, id, badge);
+    const actions = document.createElement('div'); actions.className = 'actions';
+    const toggle = document.createElement('button'); toggle.textContent = channel.enabled ? 'Tắt' : 'Bật';
+    toggle.onclick = async () => { await request(`/api/channels/${channel.channel_id}`, {method: 'PATCH', headers: {'Content-Type':'application/json'}, body: JSON.stringify({enabled: !channel.enabled})}); await refresh(); };
+    const remove = document.createElement('button'); remove.className = 'danger'; remove.textContent = 'Xóa';
+    remove.onclick = async () => { if (confirm('Xóa kênh khỏi danh sách theo dõi? Lịch sử phát hiện vẫn được giữ.')) { await request(`/api/channels/${channel.channel_id}`, {method: 'DELETE'}); showNotice('Đã xóa kênh.'); await refresh(); } };
+    actions.append(toggle, remove); row.append(info, actions);
+    const details = document.createElement('div'); details.className = 'details';
+    details.append(detail('Poll gần nhất', formatTime(channel.last_poll_at)), detail('Thành công gần nhất', formatTime(channel.last_success_at)), detail('Video gần nhất', channel.latest_seen_video_id), detail('Số lỗi', channel.failures));
+    card.append(row, details); return card;
+  }
+
+  async function refresh() {
+    try {
+      const [status, channels] = await Promise.all([request('/api/status'), request('/api/channels')]);
+      document.querySelector('#interval').textContent = `${status.poll_interval_seconds}s`;
+      document.querySelector('#ytdlp').textContent = status.ytdlp;
+      document.querySelector('#telegram').textContent = status.telegram;
+      document.querySelector('#enabled').textContent = status.enabled_channels;
+      list.replaceChildren(...(channels.length ? channels.map(channelCard) : [Object.assign(document.createElement('div'), {className:'empty', textContent:'Chưa có kênh nào.'})]));
+    } catch (error) {
+      list.replaceChildren(Object.assign(document.createElement('div'), {className:'error', textContent:error.message}));
+    }
+  }
+
+  function showNotice(message) { const notice = document.querySelector('#notice'); notice.textContent = message; notice.style.display = 'block'; setTimeout(() => notice.style.display = 'none', 2200); }
+  document.querySelector('#open-add').onclick = () => dialog.showModal();
+  document.querySelector('#cancel-add').onclick = () => dialog.close();
+  document.querySelector('#add-form').onsubmit = async event => {
+    event.preventDefault();
+    const error = document.querySelector('#form-error'); error.textContent = '';
+    try {
+      await request('/api/channels', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({channel_id:document.querySelector('#channel-value').value, name:document.querySelector('#channel-name').value || null})});
+      event.target.reset(); dialog.close(); showNotice('Đã thêm kênh.'); await refresh();
+    } catch (failure) { error.textContent = failure.message; }
+  };
+  refresh(); setInterval(refresh, 10000);
+</script>
+</body>
+</html>
