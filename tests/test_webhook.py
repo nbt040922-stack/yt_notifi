@@ -9,6 +9,23 @@ from app.state import StateStore
 from app.webhook import parse_atom, process_event
 from tests.conftest import CHANNEL_ID, FIXTURE, VIDEO_ID
 
+UNKNOWN_CHANNEL_ID = "UCaaaaaaaaaaaaaaaaaaaaaa"
+UNKNOWN_VIDEO_ID = "abcdefghijk"
+
+
+def mixed_feed() -> bytes:
+    unknown_entry = f"""
+  <entry>
+    <yt:videoId>{UNKNOWN_VIDEO_ID}</yt:videoId>
+    <yt:channelId>{UNKNOWN_CHANNEL_ID}</yt:channelId>
+    <title>Unknown Channel Video</title>
+    <link rel="alternate" href="https://www.youtube.com/watch?v={UNKNOWN_VIDEO_ID}"/>
+    <published>2026-08-12T07:00:00+00:00</published>
+    <updated>2026-08-12T07:01:00+00:00</updated>
+  </entry>
+"""
+    return FIXTURE.read_text(encoding="utf-8").replace("</feed>", unknown_entry + "</feed>").encode()
+
 
 def test_health_does_not_expose_secrets(settings):
     response = TestClient(create_app(settings)).get("/health")
@@ -86,6 +103,52 @@ def test_post_returns_success_and_deduplicates(settings):
 
     assert client.post(settings.webhook_path, content=FIXTURE.read_bytes()).status_code == 202
     assert client.post(settings.webhook_path, content=FIXTURE.read_bytes()).status_code == 202
+    notifier.send_video.assert_called_once()
+    assert StateStore(settings.state_db).get_video(VIDEO_ID) is not None
+
+
+def test_unknown_channel_is_ignored(settings, caplog):
+    notifier = Mock()
+    state = StateStore(settings.state_db)
+    client = TestClient(create_app(settings, state=state, notifier=notifier))
+    payload = FIXTURE.read_text(encoding="utf-8").replace(CHANNEL_ID, UNKNOWN_CHANNEL_ID).replace(VIDEO_ID, UNKNOWN_VIDEO_ID).encode()
+
+    with caplog.at_level("WARNING", logger="yt_notifi"):
+        response = client.post(settings.webhook_path, content=payload)
+
+    assert response.status_code == 202
+    assert state.get_video(UNKNOWN_VIDEO_ID) is None
+    notifier.send_video.assert_not_called()
+    assert "WEBSUB_EVENT_REJECTED_UNKNOWN_CHANNEL" in caplog.text
+
+
+def test_disabled_channel_is_ignored(settings):
+    settings.channels_file.write_text(
+        f'[{ {"channel_id": CHANNEL_ID, "name": "Disabled", "enabled": False} }]'.replace("'", '"').replace("False", "false"),
+        encoding="utf-8",
+    )
+    notifier = Mock()
+    state = StateStore(settings.state_db)
+    response = TestClient(create_app(settings, state=state, notifier=notifier)).post(
+        settings.webhook_path, content=FIXTURE.read_bytes()
+    )
+
+    assert response.status_code == 202
+    assert state.get_video(VIDEO_ID) is None
+    notifier.send_video.assert_not_called()
+
+
+def test_mixed_feed_processes_only_allowed_channel(settings):
+    notifier = Mock()
+    notifier.send_video.return_value = True
+    state = StateStore(settings.state_db)
+    response = TestClient(create_app(settings, state=state, notifier=notifier)).post(
+        settings.webhook_path, content=mixed_feed()
+    )
+
+    assert response.status_code == 202
+    assert state.get_video(VIDEO_ID) is not None
+    assert state.get_video(UNKNOWN_VIDEO_ID) is None
     notifier.send_video.assert_called_once()
 
 

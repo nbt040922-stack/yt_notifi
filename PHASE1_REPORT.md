@@ -39,11 +39,15 @@ The client makes a direct HTTPS `sendMessage` request. New-video messages includ
 
 SQLite `INSERT OR IGNORE` makes the first unseen video ID the only `NEW_VIDEO`. Repeated metadata notifications update `last_seen_at`, log `DUPLICATE_VIDEO`, and do not call Telegram. Reopening the database or restarting the service preserves this behavior.
 
+## POST webhook allowlist hardening
+
+The POST webhook reuses the enabled channel map loaded once by `create_app()`. After Atom parsing, entries from enabled configured channels continue to background processing. Unknown and disabled channel entries log `WEBSUB_EVENT_REJECTED_UNKNOWN_CHANNEL` and are ignored without SQLite or Telegram access. The request still returns HTTP 202, and mixed feeds process only their allowed entries.
+
 ## Validation results
 
-- Automated tests: **20 passed**
+- Automated tests: **23 passed**
 - Command: `python -m pytest -q`
-- Covered: health and secret safety, WebSub challenge validation, valid/unsafe/malformed Atom input, first event, duplicates, persistence, mocked Telegram success/failure, channel loading/filtering, topic generation, and subscription request construction
+- Covered: health and secret safety, WebSub challenge validation, valid/unsafe/malformed Atom input, enabled/unknown/disabled/mixed-channel POST handling, first event, duplicates, persistence, mocked Telegram success/failure, channel loading/filtering, topic generation, and subscription request construction
 - Manual local smoke test: **passed**
   - Service started on `127.0.0.1:8787`
   - `/health` returned `ok`
@@ -60,4 +64,4 @@ SQLite `INSERT OR IGNORE` makes the first unseen video ID the only `NEW_VIDEO`. 
 - Cloudflare Tunnel must be installed and configured manually.
 - YouTube WebSub authenticity is based on topic verification and strict payload validation; signed-content verification is not provided by the YouTube hub flow used here.
 
-PHASE 1 COMPLETE
+PHASE 1 HARDENING COMPLETE

@@ -66,6 +66,9 @@ def create_app(settings: Settings | None = None, state: StateStore | None = None
             logging.getLogger("yt_notifi").warning("WEBSUB_EVENT rejected: %s", exc)
             raise HTTPException(400, str(exc)) from exc
         for event in events:
+            if event.channel_id not in names:
+                logging.getLogger("yt_notifi").warning("WEBSUB_EVENT_REJECTED_UNKNOWN_CHANNEL")
+                continue
             background_tasks.add_task(process_event, event, state, notifier, names)
         return {"status": "accepted"}
 
