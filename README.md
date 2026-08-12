@@ -4,6 +4,40 @@ Dịch vụ chạy cục bộ, phát hiện video mới bằng YouTube WebSub v�
 
 Giai đoạn 2.1 không tải media và chưa tích hợp Silence Cutter.
 
+## Khởi động một lần bấm
+
+Sau khi hoàn tất `.env`, `.venv` và đặt `cloudflared.exe`, double-click:
+
+```text
+start.bat
+```
+
+Launcher tự:
+
+1. Kiểm tra `.venv\Scripts\python.exe`, yt-dlp và cloudflared
+2. Chặn launcher thứ hai bằng Windows named mutex
+3. Khởi động watcher và chờ local `/health`
+4. Chỉ sau khi watcher khỏe mới khởi động Cloudflare Quick Tunnel
+5. Hiển thị URL `https://*.trycloudflare.com`
+6. Giám sát hai process; tunnel chỉ tự restart tối đa một lần
+7. Dừng tunnel rồi watcher khi nhấn Ctrl+C
+
+Phase 3.1 không tự sửa `PUBLIC_CALLBACK_URL`. Sau khi Quick Tunnel tạo URL mới, vẫn cần cập nhật `.env` và subscribe theo quy trình hiện tại.
+
+Kiểm tra runtime từ terminal khác:
+
+```powershell
+.\scripts\status.ps1
+```
+
+Dừng đúng process do launcher sở hữu:
+
+```powershell
+.\scripts\stop_all.ps1
+```
+
+PID, start time và tunnel URL nằm trong `state/runtime.json`. File này không được commit. `stop_all.ps1` xác minh PID, start time và command line; không giết mọi `python.exe` hoặc `cloudflared.exe` trên máy.
+
 ## Yêu cầu
 
 - Windows 11

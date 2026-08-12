@@ -116,6 +116,7 @@ def test_restart_preserves_baseline_and_does_not_resend(settings, tmp_path):
 
 def test_missing_ytdlp_does_not_crash(settings):
     poller = ChannelPoller(settings, StateStore(settings.state_db), Mock())
+    poller.executable = None
     assert asyncio.run(poller.poll_once()) == []
     stop = asyncio.Event()
     stop.set()
@@ -157,6 +158,7 @@ def test_backoff_increases_caps_and_success_resets(settings):
 
 def test_polling_loop_shuts_down_cleanly(settings):
     poller = ChannelPoller(settings, StateStore(settings.state_db), Mock())
+    poller.executable = None
 
     async def run():
         stop = asyncio.Event()

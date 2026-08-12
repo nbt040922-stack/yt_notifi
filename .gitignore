@@ -5,6 +5,8 @@ __pycache__/
 *.py[cod]
 state/*.db
 state/*.db-*
+state/runtime.json
+state/runtime.json.tmp
 logs/*.log
 tools/*.exe
 tools/yt-dlp
