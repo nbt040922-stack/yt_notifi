@@ -6,3 +6,5 @@ __pycache__/
 state/*.db
 state/*.db-*
 logs/*.log
+tools/*.exe
+tools/yt-dlp

@@ -1,15 +1,19 @@
 from __future__ import annotations
 
+import asyncio
 import logging
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse
 
-from .config import Settings, enabled_channels
+from .config import Settings, enabled_channels, public_callback
+from .poller import ChannelPoller
 from .state import StateStore
 from .telegram import TelegramNotifier
-from .webhook import parse_atom, process_event
+from .webhook import parse_atom, process_event, resume_notifications
+from .websub import maintain_subscriptions
 
 
 def configure_logging() -> None:
@@ -31,8 +35,36 @@ def create_app(settings: Settings | None = None, state: StateStore | None = None
     notifier = notifier or TelegramNotifier(settings.telegram_bot_token, settings.telegram_chat_id)
     channels = enabled_channels(settings.channels_file)
     names = {channel.channel_id: channel.name for channel in channels}
-    topics = {f"https://www.youtube.com/feeds/videos.xml?channel_id={channel.channel_id}" for channel in channels}
-    app = FastAPI(title="YT_NOTIFI", docs_url=None, redoc_url=None)
+    topic_channels = {f"https://www.youtube.com/feeds/videos.xml?channel_id={channel.channel_id}": channel.channel_id for channel in channels}
+    topics = set(topic_channels)
+    poller = ChannelPoller(settings, state, notifier, channels)
+
+    async def maintenance_loop() -> None:
+        while True:
+            try:
+                await asyncio.to_thread(resume_notifications, state, notifier, names)
+                if settings.public_callback_url:
+                    await asyncio.to_thread(maintain_subscriptions, settings, state, channels)
+            except Exception as exc:
+                logging.getLogger("yt_notifi").error("SUBSCRIPTION_RENEWAL error_type=%s", type(exc).__name__)
+            await asyncio.sleep(60)
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        stop = asyncio.Event()
+        tasks = (
+            [asyncio.create_task(maintenance_loop()), asyncio.create_task(poller.run(stop))]
+            if settings.enable_background_tasks else []
+        )
+        yield
+        stop.set()
+        for task in tasks:
+            task.cancel()
+        for task in tasks:
+            with suppress(asyncio.CancelledError):
+                await task
+
+    app = FastAPI(title="YT_NOTIFI", docs_url=None, redoc_url=None, lifespan=lifespan)
 
     @app.get("/")
     def root() -> dict[str, str]:
@@ -51,8 +83,12 @@ def create_app(settings: Settings | None = None, state: StateStore | None = None
     ) -> str:
         if hub_mode not in {"subscribe", "unsubscribe"} or hub_topic not in topics or not hub_challenge:
             raise HTTPException(400, "Invalid WebSub verification")
-        state.record_subscription(hub_topic, hub_mode, hub_lease_seconds)
+        callback = public_callback(settings)
+        if not state.get_subscription(hub_topic):
+            state.mark_subscription_requested(topic_channels[hub_topic], hub_topic, callback)
+        state.activate_subscription(hub_topic, hub_mode, hub_lease_seconds, callback)
         logging.getLogger("yt_notifi").info("WEBSUB_VERIFY mode=%s topic=%s", hub_mode, hub_topic)
+        logging.getLogger("yt_notifi").info("SUBSCRIPTION_ACTIVE topic=%s", hub_topic)
         return hub_challenge
 
     @app.post(settings.webhook_path, status_code=202)

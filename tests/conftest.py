@@ -23,4 +23,5 @@ def settings(tmp_path: Path) -> Settings:
         public_callback_url="https://tunnel.example",
         channels_file=channels,
         state_db=tmp_path / "state.db",
+        enable_background_tasks=False,
     )

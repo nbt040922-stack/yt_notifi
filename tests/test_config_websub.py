@@ -47,6 +47,10 @@ def test_subscribe_all_posts_expected_request(client_class, settings):
     response.raise_for_status.return_value = None
     client = client_class.return_value.__enter__.return_value
     client.post.return_value = response
+    health = Mock()
+    health.raise_for_status.return_value = None
+    health.json.return_value = {"status": "ok", "service": "YT_NOTIFI"}
+    client.get.return_value = health
 
     assert subscribe_all(settings) is True
     client.post.assert_called_once_with(

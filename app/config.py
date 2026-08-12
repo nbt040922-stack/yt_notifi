@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import json
+import ipaddress
 import os
 import re
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from dotenv import load_dotenv
 
@@ -22,6 +25,10 @@ class Settings:
     port: int = 8787
     channels_file: Path = ROOT / "config" / "channels.json"
     state_db: Path = ROOT / "state" / "yt_notifi.db"
+    enable_background_tasks: bool = True
+    ytdlp_path: str = ""
+    poll_interval_seconds: int = 10
+    poll_max_concurrency: int = 3
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -38,6 +45,9 @@ class Settings:
             port=int(os.getenv("PORT", "8787")),
             channels_file=Path(os.getenv("CHANNELS_FILE", ROOT / "config" / "channels.json")),
             state_db=Path(os.getenv("STATE_DB", ROOT / "state" / "yt_notifi.db")),
+            ytdlp_path=os.getenv("YTDLP_PATH", ""),
+            poll_interval_seconds=max(1, int(os.getenv("POLL_INTERVAL_SECONDS", "10"))),
+            poll_max_concurrency=max(1, int(os.getenv("POLL_MAX_CONCURRENCY", "3"))),
         )
 
 
@@ -63,3 +73,35 @@ def load_channels(path: Path) -> list[Channel]:
 
 def enabled_channels(path: Path) -> list[Channel]:
     return [channel for channel in load_channels(path) if channel.enabled]
+
+
+def find_ytdlp(settings: Settings) -> Path | None:
+    candidates = [settings.ytdlp_path, ROOT / "tools" / "yt-dlp.exe", ROOT / "tools" / "yt-dlp"]
+    for candidate in candidates:
+        if candidate and Path(candidate).is_file():
+            return Path(candidate).resolve()
+    found = shutil.which("yt-dlp") or shutil.which("yt-dlp.exe")
+    return Path(found).resolve() if found else None
+
+
+def public_callback(settings: Settings) -> str:
+    value = settings.public_callback_url.rstrip("/")
+    parsed = urlsplit(value)
+    if not value or parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
+        raise ValueError("PUBLIC_CALLBACK_URL must be a valid HTTPS origin")
+    try:
+        parsed.port
+    except ValueError as exc:
+        raise ValueError("PUBLIC_CALLBACK_URL has an invalid port") from exc
+    if any(character.isspace() for character in parsed.hostname):
+        raise ValueError("PUBLIC_CALLBACK_URL has an invalid hostname")
+    if parsed.query or parsed.fragment or parsed.path not in {"", "/"}:
+        raise ValueError("PUBLIC_CALLBACK_URL must not contain a path, query, or fragment")
+    hostname = parsed.hostname.lower()
+    try:
+        is_local = ipaddress.ip_address(hostname).is_loopback
+    except ValueError:
+        is_local = hostname == "localhost" or hostname.endswith(".localhost")
+    if is_local:
+        raise ValueError("PUBLIC_CALLBACK_URL must not use localhost")
+    return value + settings.webhook_path

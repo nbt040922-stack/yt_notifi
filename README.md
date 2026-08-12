@@ -1,19 +1,20 @@
-# YT_NOTIFI — Phase 1
+# YT_NOTIFI — Bộ phát hiện hybrid giai đoạn 2.1
 
-A small local service that receives YouTube WebSub upload events, stores each video ID in SQLite, and sends one Telegram notification per video. It uses no YouTube API key and no paid service.
+Dịch vụ chạy cục bộ, phát hiện video mới bằng YouTube WebSub và polling dự phòng qua yt-dlp. Cả hai đường dùng chung SQLite dedupe và Telegram lifecycle. Không cần YouTube API key, VPS hoặc dịch vụ trả phí.
 
-Phase 1 does **not** download videos or run Silence Cutter.
+Giai đoạn 2.1 không tải media và chưa tích hợp Silence Cutter.
 
-## Requirements
+## Yêu cầu
 
 - Windows 11
 - Python 3.11+
-- A Telegram bot token and destination chat ID
-- An HTTPS public callback URL when connecting real YouTube subscriptions (for example, a manually configured Cloudflare Tunnel)
+- Telegram bot token và chat ID nhận thông báo
+- URL callback HTTPS công khai khi kết nối YouTube WebSub, ví dụ Cloudflare Tunnel
+- `yt-dlp` cho polling dự phòng
 
-## Setup
+## Cài đặt
 
-Run these commands from the project directory in PowerShell:
+Chạy trong PowerShell tại thư mục dự án:
 
 ```powershell
 python -m venv .venv
@@ -22,7 +23,7 @@ python -m pip install -r requirements.txt
 Copy-Item .env.example .env
 ```
 
-Edit `.env` and set:
+Mở `.env` và điền:
 
 ```env
 TELEGRAM_BOT_TOKEN=your_bot_token
@@ -31,73 +32,157 @@ PUBLIC_CALLBACK_URL=https://your-public-tunnel-host.example
 WEBHOOK_PATH=/youtube/websub
 HOST=127.0.0.1
 PORT=8787
+YTDLP_PATH=
+POLL_INTERVAL_SECONDS=10
+POLL_MAX_CONCURRENCY=3
 ```
 
-Do not add the webhook path to `PUBLIC_CALLBACK_URL`; the service appends `WEBHOOK_PATH`. `.env` is ignored by Git.
+Không thêm đường dẫn webhook vào `PUBLIC_CALLBACK_URL`; dịch vụ tự nối `WEBHOOK_PATH`. Git bỏ qua `.env`.
 
-Add channels to `config/channels.json`:
+Thêm kênh vào `config/channels.json`:
 
 ```json
 [
   {
     "channel_id": "UC_x5XG1OV2P6uZZ5FSM9Ttw",
-    "name": "Example Channel",
+    "name": "Kênh ví dụ",
     "enabled": true
   }
 ]
 ```
 
-Only channel IDs are required. No YouTube Data API key is used.
+Chỉ cần channel ID. Không dùng YouTube Data API key.
 
-## Test Telegram
+## Polling yt-dlp dự phòng
+
+Watcher tìm yt-dlp theo thứ tự:
+
+1. `YTDLP_PATH`
+2. `tools/yt-dlp.exe` hoặc `tools/yt-dlp`
+3. `PATH`
+
+Không tìm thấy yt-dlp: WebSub vẫn chạy; poller báo `MISSING`, không crash loop. Dự án không tự tải binary.
+
+Mỗi probe chỉ đọc ba video công khai mới nhất, không tải video, thumbnail, comment hoặc stream:
+
+```text
+yt-dlp --flat-playlist --playlist-end 3 --dump-single-json --no-warnings --skip-download https://www.youtube.com/channel/<CHANNEL_ID>/videos
+```
+
+Chạy một vòng chẩn đoán:
+
+```powershell
+.\scripts\poll_once.ps1
+```
+
+Lần quan sát đầu của mỗi kênh tạo `BASELINE`. Video đang tồn tại được lưu để chống trùng nhưng không gửi Telegram. Chỉ video xuất hiện sau baseline mới được phân loại `NEW`.
+
+Mặc định poll mỗi 10 giây, tối đa ba channel probe đồng thời. Một kênh lỗi không chặn kênh khác. Backoff lỗi: 10, 20, 30, tối đa 60 giây; thành công đặt lại về chu kỳ bình thường.
+
+## Kiểm tra Telegram
 
 ```powershell
 .\scripts\test_telegram.ps1
 ```
 
-The configured chat should receive `YT_NOTIFI Telegram test OK`.
+Chat đã cấu hình phải nhận được `YT_NOTIFI Telegram test OK`.
 
-## Run locally
+## Chạy cục bộ
 
 ```powershell
 .\scripts\run.ps1
 ```
 
-Check the service at `http://127.0.0.1:8787/health`.
+Kiểm tra dịch vụ tại `http://127.0.0.1:8787/health`.
 
-In a second PowerShell window, simulate a YouTube event:
+Mở cửa sổ PowerShell thứ hai để mô phỏng sự kiện YouTube:
 
 ```powershell
 .\scripts\simulate_event.ps1
 .\scripts\simulate_event.ps1
 ```
 
-The first request logs `NEW_VIDEO` and sends Telegram. The second logs `DUPLICATE_VIDEO` and does not send again. Delete `state/yt_notifi.db` only when you intentionally want to reset deduplication history.
+Lần đầu ghi log `NEW_VIDEO` và gửi Telegram. Lần hai ghi `DUPLICATE_VIDEO`, không gửi lại. Chỉ xóa `state/yt_notifi.db` khi chủ động muốn xóa toàn bộ lịch sử chống trùng.
 
-## Subscribe enabled channels
+## Cloudflare Quick Tunnel miễn phí
 
-First expose port 8787 through an HTTPS tunnel and put its public origin in `PUBLIC_CALLBACK_URL`. Cloudflare Tunnel setup is deliberately manual and outside Phase 1. Then run:
+Khởi động watcher trước, sau đó mở cửa sổ PowerShell thứ hai:
+
+```powershell
+.\scripts\start_tunnel.ps1
+```
+
+Script kiểm tra local health và tìm `cloudflared.exe` theo thứ tự: `CLOUDFLARED_PATH`, `tools/cloudflared.exe`, `PATH`. Script không tự tải file nhị phân.
+
+Sao chép URL `https://*.trycloudflare.com` do Cloudflare tạo vào `.env`. Không thêm `/youtube/websub`:
+
+```env
+PUBLIC_CALLBACK_URL=https://generated-host.trycloudflare.com
+```
+
+Kiểm tra hai đường kết nối, Telegram, subscription và trạng thái:
+
+```powershell
+.\scripts\test_public_callback.ps1
+.\scripts\test_telegram.ps1
+.\scripts\subscribe.ps1
+.\scripts\status.ps1
+```
+
+Kết quả subscription phân biệt rõ hub chấp nhận request và callback đã xác minh. Trạng thái chỉ thành `ACTIVE` sau khi GET challenge của YouTube tới watcher.
+
+Hostname Quick Tunnel đổi sau khi tunnel khởi động lại. Cập nhật `.env`, khởi động lại watcher, kiểm tra public callback rồi subscribe lại. Watcher phát hiện callback đổi và coi trạng thái cũ là hết hiệu lực.
+
+## Named Tunnel ổn định — tùy chọn
+
+Cloudflare account và domain do Cloudflare quản lý cho phép dùng hostname ổn định, nhưng không bắt buộc. Sau khi cài `cloudflared`:
+
+```powershell
+cloudflared tunnel login
+cloudflared tunnel create yt-notifi
+cloudflared tunnel route dns yt-notifi webhook.example.com
+cloudflared tunnel run --url http://127.0.0.1:8787 yt-notifi
+```
+
+Đặt `PUBLIC_CALLBACK_URL=https://webhook.example.com`. Làm theo hướng dẫn credentials do Cloudflare tạo. Không commit file credentials.
+
+## Subscribe các kênh đang bật
+
+Đưa cổng 8787 ra HTTPS tunnel, đặt origin công khai vào `PUBLIC_CALLBACK_URL`, rồi chạy:
 
 ```powershell
 .\scripts\subscribe.ps1
 ```
 
-The script sends one subscription request for each enabled channel and displays each success or failure. YouTube verifies the callback with `GET /youtube/websub`; successful verification and lease duration are stored in SQLite for future renewal support.
+Lệnh từ chối callback dùng localhost, HTTP, đường dẫn, URL lỗi hoặc public health không đạt. YouTube xác minh callback qua `GET /youtube/websub`; sau đó SQLite mới ghi `ACTIVE` và tính thời điểm hết hạn theo UTC.
 
-## Tests
+Dịch vụ tự gia hạn khi lease còn 25%, dùng retry backoff có giới hạn và không gia hạn subscription `ACTIVE` còn hiệu lực sau mỗi lần khởi động lại.
 
-Tests never contact Telegram or YouTube:
+## Kiểm thử tự động
+
+Các test không gọi Telegram hoặc YouTube thật:
 
 ```powershell
 python -m pytest -q
 ```
 
-Runtime logs are written to the console and `logs/yt_notifi.log`. Tokens and chat credentials are never logged or returned by status endpoints.
+Log được ghi ra console và `logs/yt_notifi.log`. Token, chat ID và secret không xuất hiện trong log hoặc status endpoint.
 
-## Important behavior
+## Hành vi quan trọng
 
-- Atom XML is treated as untrusted input; DTD/entity declarations, malformed XML, oversized payloads, and invalid IDs are rejected.
-- Only configured topics can pass WebSub GET verification.
-- SQLite atomically decides whether a video ID is new, so duplicate deliveries and restarts cannot resend a new-video alert.
-- Telegram errors are logged and stored as `notification_sent = 0`; they never crash the webhook receiver.
-- Phase 1 has no retry scheduler or subscription-renewal scheduler. Re-run the subscription script manually when needed.
+- Atom XML là dữ liệu không tin cậy. DTD/entity, XML lỗi, payload quá lớn và ID sai đều bị từ chối.
+- Chỉ topic đã cấu hình và bật mới vượt qua WebSub GET verification.
+- Chỉ POST từ kênh đã bật mới vào SQLite và Telegram.
+- SQLite quyết định `video_id` mới theo cơ chế atomic; webhook lặp hoặc khởi động lại không gửi lại thông báo.
+- WebSub và poll gọi chung `handle_detected_video()`; đường đến trước gửi, đường đến sau thành duplicate.
+- Baseline và trạng thái poll từng kênh tồn tại qua restart.
+- Lỗi Telegram được ghi với `notification_sent = 0`, không làm sập webhook.
+- Lỗi Telegram tạm thời retry tối đa ba lần. Thiếu cấu hình, HTTP 401 và 403 dừng ngay. Video đã gửi thành công không gửi lại.
+- Mỗi video lưu thời điểm phát hiện và độ trễ hợp lệ, không âm.
+- Tác vụ gia hạn nội bộ dừng sạch khi FastAPI tắt.
+
+## Kiểm tra upload thật có kiểm soát — tùy chọn
+
+Thêm kênh YouTube do bạn quản lý vào `config/channels.json`, khởi động lại watcher, subscribe và xác nhận `ACTIVE` bằng `scripts/status.ps1`.
+
+Tải một video public hoặc unlisted. WebSub POST thật phải tạo một hàng SQLite và một thông báo Telegram. Webhook gửi lại vẫn bị chống trùng. Không coi fixture mô phỏng là kết quả upload thật.

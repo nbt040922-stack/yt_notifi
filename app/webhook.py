@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 import xml.etree.ElementTree as ET
 
 from .models import VideoEvent
@@ -45,11 +46,50 @@ def parse_atom(payload: bytes) -> list[VideoEvent]:
     return events
 
 
-def process_event(event: VideoEvent, state: StateStore, notifier: TelegramNotifier, channel_names: dict[str, str]) -> None:
-    logger.info("WEBSUB_EVENT video_id=%s", event.video_id)
-    if not state.record_event(event):
-        logger.info("DUPLICATE_VIDEO video_id=%s", event.video_id)
-        return
+def deliver_notification(event: VideoEvent, state: StateStore, notifier: TelegramNotifier, channel_name: str, sleep=time.sleep) -> None:
+    row = state.get_video(event.video_id)
+    attempts = row["notification_attempts"] if row else 0
+    for delay in (0, 5, 20)[attempts:]:
+        if delay:
+            logger.info("TELEGRAM_RETRY video_id=%s", event.video_id)
+            sleep(delay)
+        row = state.get_video(event.video_id)
+        sent = notifier.send_video(event, channel_name, row["detected_at"], row["detection_latency_seconds"])
+        error = getattr(notifier, "last_error", None)
+        if not isinstance(error, str):
+            error = None if sent else "delivery failed"
+        state.record_notification_attempt(event.video_id, sent, error)
+        if sent or getattr(notifier, "last_transient", False) is not True:
+            return
+
+
+def handle_detected_video(
+    event: VideoEvent,
+    state: StateStore,
+    notifier: TelegramNotifier,
+    channel_names: dict[str, str],
+    *,
+    baseline: bool = False,
+) -> str:
+    if not state.record_event(event, baseline=baseline):
+        logger.info("%s video_id=%s", "POLL_DUPLICATE" if event.source == "poll" else "DUPLICATE_VIDEO", event.video_id)
+        return "DUPLICATE"
+    if baseline:
+        return "BASELINE"
     logger.info("NEW_VIDEO video_id=%s", event.video_id)
-    sent = notifier.send_video(event, channel_names.get(event.channel_id, event.channel_id))
-    state.mark_notification(event.video_id, sent)
+    deliver_notification(event, state, notifier, channel_names.get(event.channel_id, event.channel_id))
+    return "NEW"
+
+
+def process_event(event: VideoEvent, state: StateStore, notifier: TelegramNotifier, channel_names: dict[str, str]) -> str:
+    logger.info("WEBSUB_EVENT video_id=%s", event.video_id)
+    return handle_detected_video(event, state, notifier, channel_names)
+
+
+def resume_notifications(state: StateStore, notifier: TelegramNotifier, channel_names: dict[str, str]) -> None:
+    for row in state.pending_notifications():
+        event = VideoEvent(
+            row["video_id"], row["channel_id"], row["title"], row["published_at"], "",
+            f"https://www.youtube.com/watch?v={row['video_id']}",
+        )
+        deliver_notification(event, state, notifier, channel_names.get(event.channel_id, event.channel_id))
