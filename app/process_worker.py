@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from urllib.parse import urlsplit
 
 import httpx
@@ -68,12 +70,14 @@ class ProcessHandoffWorker:
         process_state = str(payload.get("state") or "")
         external_id = str(payload.get("external_id") or job["process_external_id"] or "") or None
         if process_state == "DONE":
-            exact_path = str(payload.get("processed_file_path") or "")
-            if not exact_path:
-                return self._failed(job, "MISSING_PROCESSED_FILE_PATH", process_state, external_id)
+            exact_files = [str(value) for value in payload.get("processed_files") or [] if str(value)]
+            if not exact_files or not all(Path(value).is_file() for value in exact_files):
+                return self._failed(job, "MISSING_PROCESSED_FILES", process_state, external_id)
             return self.state.update_process_job(
                 job["id"], status="COMPLETED", external_id=external_id,
-                process_state=process_state, progress=100, processed_file_path=exact_path,
+                process_state=process_state, progress=100,
+                processed_file_path=exact_files[0],
+                processed_files_json=json.dumps(exact_files, ensure_ascii=False),
             )
         if process_state == "FAILED":
             return self._failed(job, str(payload.get("error") or "PROCESSING_FAILED"), process_state, external_id)

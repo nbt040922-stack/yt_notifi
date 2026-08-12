@@ -94,6 +94,7 @@ class StateStore:
                     process_state TEXT,
                     process_progress REAL NOT NULL DEFAULT 0,
                     processed_file_path TEXT,
+                    processed_files_json TEXT,
                     process_error TEXT,
                     process_attempts INTEGER NOT NULL DEFAULT 0,
                     next_process_attempt_at TEXT
@@ -113,6 +114,7 @@ class StateStore:
                 "process_state": "TEXT",
                 "process_progress": "REAL NOT NULL DEFAULT 0",
                 "processed_file_path": "TEXT",
+                "processed_files_json": "TEXT",
                 "process_error": "TEXT",
                 "process_attempts": "INTEGER NOT NULL DEFAULT 0",
                 "next_process_attempt_at": "TEXT",
@@ -237,6 +239,7 @@ class StateStore:
         process_state: str | None = None,
         progress: float = 0,
         processed_file_path: str | None = None,
+        processed_files_json: str | None = None,
         process_error: str | None = None,
         attempts: int = 0,
         next_attempt_at: str | None = None,
@@ -246,9 +249,10 @@ class StateStore:
                 """UPDATE processing_jobs SET status=?,
                    process_external_id=COALESCE(?, process_external_id), process_state=?,
                    process_progress=?, processed_file_path=COALESCE(?, processed_file_path),
+                   processed_files_json=COALESCE(?, processed_files_json),
                    process_error=?, updated_at=?, process_attempts=?, next_process_attempt_at=?
                    WHERE id=?""",
-                (status, external_id, process_state, progress, processed_file_path,
+                (status, external_id, process_state, progress, processed_file_path, processed_files_json,
                  process_error, utc_now(), attempts, next_attempt_at, job_id),
             )
 

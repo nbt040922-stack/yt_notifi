@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 import subprocess
+import json
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from unittest.mock import Mock
@@ -95,12 +96,27 @@ def test_active_state_mapping(settings, tmp_path, remote, local):
     assert (job["status"], job["process_state"], job["process_progress"]) == (local, remote, 62)
 
 
-def test_done_persists_exact_path(settings, tmp_path):
+def test_done_persists_exact_part_paths(settings, tmp_path):
     state, _ = downloaded_job(settings, tmp_path)
-    exact = str(tmp_path / "nas" / "final.mp4")
-    ProcessHandoffWorker(settings, state, Bridge([Response(payload("DONE", processed_file_path=exact))])).tick()
+    exact = [tmp_path / "nas" / "PART_1.mp4", tmp_path / "nas" / "PART_2.mp4"]
+    exact[0].parent.mkdir()
+    for path in exact:
+        path.write_bytes(b"part")
+    ProcessHandoffWorker(settings, state, Bridge([Response(payload(
+        "DONE", processed_files=[str(path) for path in exact],
+        processed_file_path=str(exact[0]),
+    ))])).tick()
     job = state.processing_jobs()[0]
-    assert (job["status"], job["processed_file_path"]) == ("COMPLETED", exact)
+    assert (job["status"], job["processed_file_path"]) == ("COMPLETED", str(exact[0]))
+    assert json.loads(job["processed_files_json"]) == [str(path) for path in exact]
+
+
+def test_done_requires_every_returned_part_to_exist(settings, tmp_path):
+    state, _ = downloaded_job(settings, tmp_path)
+    missing = str(tmp_path / "nas" / "PART_1.mp4")
+    ProcessHandoffWorker(settings, state, Bridge([Response(payload("DONE", processed_files=[missing]))])).tick()
+    job = state.processing_jobs()[0]
+    assert (job["status"], job["process_error"]) == ("FAILED", "MISSING_PROCESSED_FILES")
 
 
 def test_terminal_failure_and_missing_source_response(settings, tmp_path):
