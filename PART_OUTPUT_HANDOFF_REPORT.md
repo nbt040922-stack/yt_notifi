@@ -30,4 +30,3 @@ Ba file đều tồn tại và đã được Silence Cutter probe thành công. 
 - Toàn bộ YT_NOTIFI: `102 passed, 1 warning`.
 - Có test riêng xác nhận lưu đúng nhiều part.
 - Có test riêng xác nhận thiếu bất kỳ file trả về nào thì job chuyển `FAILED` với `MISSING_PROCESSED_FILES`, không chuyển nhầm sang `COMPLETED`.
-
