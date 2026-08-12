@@ -18,6 +18,11 @@ $exitCode = 0
 $runtime = $null
 $launcherStartedAt = Get-ProcessStartUtc (Get-Process -Id $PID)
 $startedAt = (Get-Date).ToUniversalTime().ToString("o")
+$runtimeToken = New-RuntimeToken
+$env:LAUNCHER_RUNTIME_TOKEN = $runtimeToken
+$callbackGeneration = 0
+$callbackUpdatedAt = $null
+$callbackUrl = $null
 
 function Save-Runtime {
     $script:runtime = [ordered]@{
@@ -29,6 +34,10 @@ function Save-Runtime {
         cloudflared_started_at = $(if ($script:tunnel) { Get-ProcessStartUtc $script:tunnel } else { $null })
         started_at = $script:startedAt
         tunnel_url = $script:tunnelUrl
+        callback_origin = $script:tunnelUrl
+        callback_url = $script:callbackUrl
+        callback_updated_at = $script:callbackUpdatedAt
+        callback_generation = $script:callbackGeneration
     }
     Write-RuntimeState $runtimePath $script:runtime
 }
@@ -52,6 +61,20 @@ function Start-QuickTunnel([string]$Executable) {
         throw "Cloudflare Tunnel failed to start or provide a public URL."
     }
     return [pscustomobject]@{ Process = $process; Url = $url }
+}
+
+function Apply-RuntimeCallback([string]$Origin) {
+    $response = Update-BackendCallback $Origin $script:runtimeToken
+    if ($response.changed) {
+        $script:callbackGeneration++
+        $script:callbackUpdatedAt = (Get-Date).ToUniversalTime().ToString("o")
+    }
+    $script:callbackUrl = (Assert-PublicOrigin $Origin) + $(if ($env:WEBHOOK_PATH) { $env:WEBHOOK_PATH } else { "/youtube/websub" })
+    Save-Runtime
+    Write-Host "Callback update    OK"
+    Write-Host "WebSub refresh     $(if ([int]$response.requested -gt 0) { 'REQUESTED' } else { 'UNCHANGED' })"
+    Write-Host "Polling fallback   $(if ($script:ytdlp) { 'ACTIVE' } else { 'UNAVAILABLE' })"
+    Write-LauncherLog $launcherLog "runtime callback updated generation=$script:callbackGeneration requested=$($response.requested)"
 }
 
 try {
@@ -85,8 +108,8 @@ try {
     $startedTunnel = Start-QuickTunnel $cloudflared
     $tunnel = $startedTunnel.Process
     $script:tunnelUrl = $startedTunnel.Url
-    Save-Runtime
     Write-Host "Cloudflared   OK"
+    Apply-RuntimeCallback $script:tunnelUrl
     Write-Host "`nLocal:`nhttp://127.0.0.1:8787"
     Write-Host "`nTunnel:`n$script:tunnelUrl"
     $pollInterval = if ($env:POLL_INTERVAL_SECONDS) { $env:POLL_INTERVAL_SECONDS } else { "10" }
@@ -107,7 +130,7 @@ try {
             $startedTunnel = Start-QuickTunnel $cloudflared
             $tunnel = $startedTunnel.Process
             $script:tunnelUrl = $startedTunnel.Url
-            Save-Runtime
+            Apply-RuntimeCallback $script:tunnelUrl
             Write-Host "Cloudflared   OK`nTunnel:`n$script:tunnelUrl"
         }
     }

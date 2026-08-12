@@ -74,8 +74,9 @@ def ensure_subscriptions(
     *,
     force: bool = False,
     now: datetime | None = None,
+    callback: str | None = None,
 ) -> list[tuple[Channel, bool, str]]:
-    callback = public_callback(settings)
+    callback = callback or public_callback(settings)
     results = []
     for channel in channels:
         current = state.get_subscription(topic_for(channel.channel_id))
@@ -85,17 +86,17 @@ def ensure_subscriptions(
     return results
 
 
-def maintain_subscriptions(settings: Settings, state: StateStore, channels: list[Channel]) -> None:
+def maintain_subscriptions(settings: Settings, state: StateStore, channels: list[Channel], callback: str | None = None) -> None:
     with httpx.Client(timeout=20) as client:
-        if public_health_ok(settings, client):
-            ensure_subscriptions(settings, state, channels, client)
+        if public_health_ok(settings, client, callback):
+            ensure_subscriptions(settings, state, channels, client, callback=callback)
         else:
             logger.error("SUBSCRIPTION_RENEWAL public_health=FAIL")
 
 
-def public_health_ok(settings: Settings, client) -> bool:
+def public_health_ok(settings: Settings, client, callback: str | None = None) -> bool:
     try:
-        callback = public_callback(settings)
+        callback = callback or public_callback(settings)
         origin = callback.removesuffix(settings.webhook_path)
         response = client.get(origin + "/health")
         response.raise_for_status()

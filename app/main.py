@@ -1,19 +1,27 @@
 from __future__ import annotations
 
 import asyncio
+import hmac
+import ipaddress
 import logging
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse
+from pydantic import BaseModel
 
-from .config import Settings, enabled_channels, public_callback
+from .callback import ActiveCallback
+from .config import Settings, enabled_channels
 from .poller import ChannelPoller
 from .state import StateStore
 from .telegram import TelegramNotifier
 from .webhook import parse_atom, process_event, resume_notifications
-from .websub import maintain_subscriptions
+from .websub import ensure_subscriptions, maintain_subscriptions
+
+
+class RuntimeCallbackUpdate(BaseModel):
+    public_origin: str
 
 
 def configure_logging() -> None:
@@ -38,13 +46,24 @@ def create_app(settings: Settings | None = None, state: StateStore | None = None
     topic_channels = {f"https://www.youtube.com/feeds/videos.xml?channel_id={channel.channel_id}": channel.channel_id for channel in channels}
     topics = set(topic_channels)
     poller = ChannelPoller(settings, state, notifier, channels)
+    active_callback = ActiveCallback(settings)
+
+    def refresh_subscriptions(callback: str) -> list[tuple]:
+        import httpx
+
+        with httpx.Client(timeout=20) as client:
+            return ensure_subscriptions(settings, state, channels, client, callback=callback)
 
     async def maintenance_loop() -> None:
         while True:
             try:
                 await asyncio.to_thread(resume_notifications, state, notifier, names)
-                if settings.public_callback_url:
-                    await asyncio.to_thread(maintain_subscriptions, settings, state, channels)
+                try:
+                    callback = active_callback.callback_url
+                except ValueError:
+                    callback = None
+                if callback:
+                    await asyncio.to_thread(maintain_subscriptions, settings, state, channels, callback)
             except Exception as exc:
                 logging.getLogger("yt_notifi").error("SUBSCRIPTION_RENEWAL error_type=%s", type(exc).__name__)
             await asyncio.sleep(60)
@@ -74,6 +93,27 @@ def create_app(settings: Settings | None = None, state: StateStore | None = None
     def health() -> dict[str, str | int]:
         return {"status": "ok", "service": "YT_NOTIFI", "enabled_channels": len(channels)}
 
+    @app.post("/internal/runtime-callback")
+    async def update_runtime_callback(payload: RuntimeCallbackUpdate, request: Request) -> dict[str, str | int | bool]:
+        try:
+            caller = ipaddress.ip_address(request.client.host if request.client else "")
+        except ValueError:
+            caller = None
+        token = request.headers.get("x-yt-notifi-runtime-token", "")
+        if not caller or not caller.is_loopback or not settings.launcher_runtime_token or not hmac.compare_digest(
+            token, settings.launcher_runtime_token
+        ):
+            raise HTTPException(403, "Forbidden")
+        try:
+            changed = active_callback.set_runtime(payload.public_origin)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        if not changed:
+            return {"status": "unchanged", "changed": False, "requested": 0}
+        results = await asyncio.to_thread(refresh_subscriptions, active_callback.callback_url)
+        logging.getLogger("yt_notifi").info("RUNTIME_CALLBACK_UPDATED subscription_requests=%s", len(results))
+        return {"status": "updated", "changed": True, "requested": len(results)}
+
     @app.get(settings.webhook_path, response_class=PlainTextResponse)
     def verify(
         hub_mode: str = Query(alias="hub.mode"),
@@ -83,7 +123,7 @@ def create_app(settings: Settings | None = None, state: StateStore | None = None
     ) -> str:
         if hub_mode not in {"subscribe", "unsubscribe"} or hub_topic not in topics or not hub_challenge:
             raise HTTPException(400, "Invalid WebSub verification")
-        callback = public_callback(settings)
+        callback = active_callback.callback_url
         if not state.get_subscription(hub_topic):
             state.mark_subscription_requested(topic_channels[hub_topic], hub_topic, callback)
         state.activate_subscription(hub_topic, hub_mode, hub_lease_seconds, callback)

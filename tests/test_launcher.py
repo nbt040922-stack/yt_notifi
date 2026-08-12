@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import subprocess
 import uuid
+import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -142,3 +143,22 @@ def test_launcher_log_redacts_secrets(tmp_path):
     assert "top-secret-token" not in result.stdout
     assert "private-chat" not in result.stdout
     assert result.stdout.count("[REDACTED]") == 2
+
+
+def test_launcher_runtime_origin_validation():
+    valid = ps("Assert-PublicOrigin 'https://quick-test.trycloudflare.com/'")
+    invalid = ps("try { Assert-PublicOrigin 'https://quick-test.trycloudflare.com/path' } catch { 'REJECTED' }")
+    assert valid.stdout.strip() == "https://quick-test.trycloudflare.com"
+    assert invalid.stdout.strip() == "REJECTED"
+
+
+def test_launcher_callback_update_sends_token_without_persisting_it():
+    result = ps(
+        "$invoke={param($body,$headers) [pscustomobject]@{body=$body;token=$headers['X-YT-Notifi-Runtime-Token'];changed=$true;requested=1}}; "
+        "$r=Update-BackendCallback 'https://quick-test.trycloudflare.com' 'runtime-secret' $invoke; "
+        "@{body=$r.body;token_ok=($r.token -eq 'runtime-secret');changed=$r.changed;requested=$r.requested}|ConvertTo-Json -Compress"
+    )
+    data = json.loads(result.stdout)
+    assert json.loads(data["body"])["public_origin"] == "https://quick-test.trycloudflare.com"
+    assert data["token_ok"] is True
+    assert data["changed"] is True

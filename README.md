@@ -19,10 +19,12 @@ Launcher tự:
 3. Khởi động watcher và chờ local `/health`
 4. Chỉ sau khi watcher khỏe mới khởi động Cloudflare Quick Tunnel
 5. Hiển thị URL `https://*.trycloudflare.com`
-6. Giám sát hai process; tunnel chỉ tự restart tối đa một lần
-7. Dừng tunnel rồi watcher khi nhấn Ctrl+C
+6. Gửi URL vào endpoint nội bộ localhost bằng token runtime
+7. Tự refresh WebSub cho mọi kênh đang bật, không restart watcher
+8. Giám sát hai process; tunnel chỉ tự restart tối đa một lần
+9. Dừng tunnel rồi watcher khi nhấn Ctrl+C
 
-Phase 3.1 không tự sửa `PUBLIC_CALLBACK_URL`. Sau khi Quick Tunnel tạo URL mới, vẫn cần cập nhật `.env` và subscribe theo quy trình hiện tại.
+Luồng dùng bình thường chỉ cần double-click `start.bat`. Launcher không sửa `.env`, không yêu cầu copy URL và không cần chạy `subscribe.ps1`. Nếu Quick Tunnel restart với URL mới, launcher tự cập nhật callback và refresh subscription lại.
 
 Kiểm tra runtime từ terminal khác:
 
@@ -140,6 +142,8 @@ Lần đầu ghi log `NEW_VIDEO` và gửi Telegram. Lần hai ghi `DUPLICATE_VI
 
 ## Cloudflare Quick Tunnel miễn phí
 
+Phần này dành cho phục hồi thủ công hoặc chạy không qua launcher. Luồng bình thường dùng `start.bat`.
+
 Khởi động watcher trước, sau đó mở cửa sổ PowerShell thứ hai:
 
 ```powershell
@@ -166,6 +170,8 @@ Kiểm tra hai đường kết nối, Telegram, subscription và trạng thái:
 Kết quả subscription phân biệt rõ hub chấp nhận request và callback đã xác minh. Trạng thái chỉ thành `ACTIVE` sau khi GET challenge của YouTube tới watcher.
 
 Hostname Quick Tunnel đổi sau khi tunnel khởi động lại. Cập nhật `.env`, khởi động lại watcher, kiểm tra public callback rồi subscribe lại. Watcher phát hiện callback đổi và coi trạng thái cũ là hết hiệu lực.
+
+Các bước sửa `.env` ở mục này không cần thiết khi dùng one-click launcher.
 
 ## Named Tunnel ổn định — tùy chọn
 

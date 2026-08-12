@@ -120,6 +120,36 @@ function Get-TunnelUrl([string]$Text) {
     return $null
 }
 
+function New-RuntimeToken {
+    $bytes = New-Object byte[] 32
+    [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
+    return [Convert]::ToBase64String($bytes)
+}
+
+function Assert-PublicOrigin([string]$Origin) {
+    $uri = $null
+    if (-not [Uri]::TryCreate($Origin, [UriKind]::Absolute, [ref]$uri) -or
+        $uri.Scheme -ne "https" -or -not $uri.Host -or $uri.UserInfo -or
+        $uri.AbsolutePath -ne "/" -or $uri.Query -or $uri.Fragment) {
+        throw "Runtime callback must be an HTTPS origin without path, query, fragment, or credentials."
+    }
+    return $uri.GetLeftPart([UriPartial]::Authority)
+}
+
+function Update-BackendCallback(
+    [string]$Origin,
+    [string]$Token,
+    [scriptblock]$Invoker = {
+        param($body, $headers)
+        Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8787/internal/runtime-callback" `
+            -ContentType "application/json" -Body $body -Headers $headers -TimeoutSec 30
+    }
+) {
+    $validated = Assert-PublicOrigin $Origin
+    $body = @{ public_origin = $validated } | ConvertTo-Json -Compress
+    return & $Invoker $body @{ "X-YT-Notifi-Runtime-Token" = $Token }
+}
+
 function Protect-LogText([string]$Text) {
     foreach ($secret in @($env:TELEGRAM_BOT_TOKEN, $env:TELEGRAM_CHAT_ID)) {
         if ($secret) { $Text = $Text.Replace($secret, "[REDACTED]") }

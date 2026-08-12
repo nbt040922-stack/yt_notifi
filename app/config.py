@@ -29,6 +29,7 @@ class Settings:
     ytdlp_path: str = ""
     poll_interval_seconds: int = 10
     poll_max_concurrency: int = 3
+    launcher_runtime_token: str = ""
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -48,6 +49,7 @@ class Settings:
             ytdlp_path=os.getenv("YTDLP_PATH", ""),
             poll_interval_seconds=max(1, int(os.getenv("POLL_INTERVAL_SECONDS", "10"))),
             poll_max_concurrency=max(1, int(os.getenv("POLL_MAX_CONCURRENCY", "3"))),
+            launcher_runtime_token=os.getenv("LAUNCHER_RUNTIME_TOKEN", ""),
         )
 
 
@@ -84,8 +86,8 @@ def find_ytdlp(settings: Settings) -> Path | None:
     return Path(found).resolve() if found else None
 
 
-def public_callback(settings: Settings) -> str:
-    value = settings.public_callback_url.rstrip("/")
+def validate_public_origin(value: str) -> str:
+    value = value.rstrip("/")
     parsed = urlsplit(value)
     if not value or parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
         raise ValueError("PUBLIC_CALLBACK_URL must be a valid HTTPS origin")
@@ -104,4 +106,8 @@ def public_callback(settings: Settings) -> str:
         is_local = hostname == "localhost" or hostname.endswith(".localhost")
     if is_local:
         raise ValueError("PUBLIC_CALLBACK_URL must not use localhost")
-    return value + settings.webhook_path
+    return value
+
+
+def public_callback(settings: Settings) -> str:
+    return validate_public_origin(settings.public_callback_url) + settings.webhook_path
