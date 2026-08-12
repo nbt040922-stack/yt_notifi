@@ -47,9 +47,14 @@
     button:disabled { cursor: not-allowed; opacity: .45; }
     .resolve-status { min-height: 18px; margin-top: 7px; color: #9eabbd; font-size: 12px; }
     .resolve-status.success { color: #42d392; }
+    .job { display: grid; grid-template-columns: 1fr 1.4fr .6fr 1.6fr .6fr; gap: 14px; padding: 14px; border-bottom: 1px solid #252d3c; align-items: center; }
+    .job:first-child { border-top: 1px solid #252d3c; }
+    .job span { overflow-wrap: anywhere; font-size: 13px; }
+    .job .muted { color: #8f9bad; }
+    .job .failed { color: #ff9ca6; }
     .form-error { min-height: 20px; margin: 12px 0; color: #ff9ca6; font-size: 13px; }
     .notice { position: fixed; right: 20px; bottom: 20px; background: #183a2d; border: 1px solid #34775d; border-radius: 9px; padding: 11px 15px; display: none; }
-    @media (max-width: 700px) { main { margin-top: 24px; } .summary, .details { grid-template-columns: repeat(2, 1fr); } .row { align-items: flex-start; flex-direction: column; } }
+    @media (max-width: 700px) { main { margin-top: 24px; } .summary, .details { grid-template-columns: repeat(2, 1fr); } .row { align-items: flex-start; flex-direction: column; } .job { grid-template-columns: 1fr; } }
   </style>
 </head>
 <body>
@@ -63,6 +68,8 @@
   </section>
   <div class="toolbar"><h2>KÊNH THEO DÕI</h2><button class="primary" id="open-add">+ Thêm kênh</button></div>
   <div id="channels"></div>
+  <h2>JOBS</h2>
+  <div id="jobs"></div>
 </main>
 
 <dialog id="add-dialog">
@@ -83,6 +90,7 @@
 
 <script>
   const list = document.querySelector('#channels');
+  const jobsList = document.querySelector('#jobs');
   const dialog = document.querySelector('#add-dialog');
   const nameInput = document.querySelector('#channel-name');
   const urlInput = document.querySelector('#channel-url');
@@ -135,14 +143,26 @@
     card.append(row, details); return card;
   }
 
+  function jobCard(job) {
+    const row = document.createElement('div'); row.className = 'job';
+    const channel = document.createElement('strong'); channel.textContent = job.channel_name;
+    const video = document.createElement('span'); video.textContent = job.video_title || job.video_id;
+    const status = document.createElement('span'); status.textContent = job.error ? `${job.status}: ${job.error}` : job.status;
+    if (job.status === 'FAILED') status.className = 'failed';
+    const output = document.createElement('span'); output.className = 'muted'; output.textContent = job.output_dir || '—';
+    const created = document.createElement('span'); created.className = 'muted'; created.textContent = formatTime(job.created_at);
+    row.append(channel, video, status, output, created); return row;
+  }
+
   async function refresh() {
     try {
-      const [status, channels] = await Promise.all([request('/api/status'), request('/api/channels')]);
+      const [status, channels, jobs] = await Promise.all([request('/api/status'), request('/api/channels'), request('/api/jobs')]);
       document.querySelector('#interval').textContent = `${status.poll_interval_seconds}s`;
       document.querySelector('#ytdlp').textContent = status.ytdlp;
       document.querySelector('#telegram').textContent = status.telegram;
       document.querySelector('#enabled').textContent = status.enabled_channels;
       list.replaceChildren(...(channels.length ? channels.map(channelCard) : [Object.assign(document.createElement('div'), {className:'empty', textContent:'Chưa có kênh nào.'})]));
+      jobsList.replaceChildren(...(jobs.length ? jobs.map(jobCard) : [Object.assign(document.createElement('div'), {className:'empty', textContent:'Chưa có job nào.'})]));
     } catch (error) {
       list.replaceChildren(Object.assign(document.createElement('div'), {className:'error', textContent:error.message}));
     }

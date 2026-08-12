@@ -100,7 +100,10 @@ class ChannelPoller:
         baseline = not poll_state or not poll_state["initialized"]
         results = []
         for event in reversed(events):
-            classification = handle_detected_video(event, self.state, self.notifier, self.names, baseline=baseline)
+            classification = handle_detected_video(
+                event, self.state, self.notifier, self.names,
+                baseline=baseline, nas_output_root=self.settings.nas_output_root,
+            )
             results.append((event, classification))
             if classification == "NEW":
                 logger.info("POLL_NEW_VIDEO video_id=%s", event.video_id)

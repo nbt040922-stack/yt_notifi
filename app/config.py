@@ -25,10 +25,12 @@ class Settings:
     ytdlp_path: str = ""
     poll_interval_seconds: int = 10
     poll_max_concurrency: int = 3
+    nas_output_root: Path | None = None
 
     @classmethod
     def from_env(cls) -> "Settings":
         load_dotenv(ROOT / ".env")
+        nas_output_root = os.getenv("NAS_OUTPUT_ROOT", "").strip()
         return cls(
             telegram_bot_token=os.getenv("TELEGRAM_BOT_TOKEN", ""),
             telegram_chat_id=os.getenv("TELEGRAM_CHAT_ID", ""),
@@ -39,6 +41,7 @@ class Settings:
             ytdlp_path=os.getenv("YTDLP_PATH", ""),
             poll_interval_seconds=max(1, int(os.getenv("POLL_INTERVAL_SECONDS", "10"))),
             poll_max_concurrency=max(1, int(os.getenv("POLL_MAX_CONCURRENCY", "3"))),
+            nas_output_root=Path(nas_output_root) if nas_output_root else None,
         )
 
 

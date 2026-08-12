@@ -170,6 +170,7 @@ def test_reenable_baselines_videos_uploaded_while_disabled(settings, tmp_path):
     state.reset_poll_baseline(CHANNEL_ID)
     asyncio.run(poller.poll_once())
     assert state.get_video(NEW_VIDEO)["baseline"] == 1
+    assert state.processing_jobs() == []
     notifier.send_video.assert_not_called()
 
 

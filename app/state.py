@@ -70,6 +70,20 @@ class StateStore:
                     next_poll_at TEXT
                 )"""
             )
+            db.execute(
+                """CREATE TABLE IF NOT EXISTS processing_jobs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    created_at TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    video_id TEXT NOT NULL UNIQUE,
+                    video_url TEXT NOT NULL,
+                    video_title TEXT NOT NULL,
+                    source_channel_id TEXT NOT NULL,
+                    channel_name TEXT NOT NULL,
+                    output_dir TEXT NOT NULL,
+                    error TEXT
+                )"""
+            )
 
     def record_event(self, event: VideoEvent, baseline: bool = False) -> bool:
         now = datetime.now(timezone.utc)
@@ -109,6 +123,29 @@ class StateStore:
     def pending_notifications(self) -> list[sqlite3.Row]:
         with self._connect() as db:
             return list(db.execute("SELECT * FROM videos WHERE notification_sent=0 AND notification_attempts BETWEEN 1 AND 2"))
+
+    def create_processing_job(
+        self,
+        event: VideoEvent,
+        channel_name: str,
+        output_dir: str,
+        status: str,
+        error: str | None,
+    ) -> bool:
+        with self._connect() as db:
+            cursor = db.execute(
+                """INSERT OR IGNORE INTO processing_jobs
+                   (created_at, status, video_id, video_url, video_title, source_channel_id,
+                    channel_name, output_dir, error)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (utc_now(), status, event.video_id, event.url, event.title, event.channel_id,
+                 channel_name, output_dir, error),
+            )
+            return cursor.rowcount == 1
+
+    def processing_jobs(self) -> list[sqlite3.Row]:
+        with self._connect() as db:
+            return list(db.execute("SELECT * FROM processing_jobs ORDER BY id DESC"))
 
     def get_poll_state(self, channel_id: str) -> sqlite3.Row | None:
         with self._connect() as db:

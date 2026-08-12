@@ -165,6 +165,10 @@ def create_app(
     def api_channels() -> list[dict]:
         return [channel_payload(channel) for channel in channel_store.list()]
 
+    @app.get("/api/jobs")
+    def api_jobs() -> list[dict]:
+        return [dict(job) for job in state.processing_jobs()]
+
     @app.post("/api/channels/resolve")
     async def resolve_channel_url(payload: ChannelResolve) -> dict:
         try:

@@ -3,7 +3,9 @@ from __future__ import annotations
 import logging
 import re
 import time
+from pathlib import Path
 
+from .jobs import create_processing_job
 from .models import VideoEvent
 from .state import StateStore
 from .telegram import TelegramNotifier
@@ -42,13 +44,19 @@ def handle_detected_video(
     channel_names: dict[str, str],
     *,
     baseline: bool = False,
+    nas_output_root: Path | None = None,
 ) -> str:
     if not state.record_event(event, baseline=baseline):
         logger.debug("POLL_DUPLICATE video_id=%s", event.video_id)
         return "DUPLICATE"
     if baseline:
         return "BASELINE"
-    deliver_notification(event, state, notifier, channel_names.get(event.channel_id, event.channel_id))
+    channel_name = channel_names.get(event.channel_id, event.channel_id)
+    try:
+        create_processing_job(state, event, channel_name, nas_output_root)
+    except Exception as exc:
+        logger.error("JOB_CREATE_FAILED video_id=%s error_type=%s", event.video_id, type(exc).__name__)
+    deliver_notification(event, state, notifier, channel_name)
     return "NEW"
 
 

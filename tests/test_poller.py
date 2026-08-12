@@ -63,6 +63,7 @@ def test_first_observation_baselines_without_notification(settings, tmp_path):
     assert results[0][1] == "BASELINE"
     assert state.get_video(VIDEO_ID)["baseline"] == 1
     assert state.get_video(VIDEO_ID)["detection_source"] == "poll"
+    assert state.processing_jobs() == []
     notifier.send_video.assert_not_called()
 
 
@@ -88,6 +89,7 @@ def test_duplicate_poll_does_not_notify_twice(settings, tmp_path):
     poller.runner = lambda *_args, **_kwargs: completed(payload((NEW_VIDEO, "New", {}), (VIDEO_ID, "Old", {})))
     poller.poll_channel(poller.channels[0])
     notifier.send_video.assert_called_once()
+    assert len(state.processing_jobs()) == 1
 
 
 def test_restart_preserves_baseline_and_does_not_resend(settings, tmp_path):
