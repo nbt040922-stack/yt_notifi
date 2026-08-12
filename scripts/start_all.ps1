@@ -13,81 +13,30 @@ if (-not $mutex) {
 }
 
 $watcher = $null
-$tunnel = $null
 $exitCode = 0
-$runtime = $null
 $launcherStartedAt = Get-ProcessStartUtc (Get-Process -Id $PID)
 $startedAt = (Get-Date).ToUniversalTime().ToString("o")
-$runtimeToken = New-RuntimeToken
-$env:LAUNCHER_RUNTIME_TOKEN = $runtimeToken
-$callbackGeneration = 0
-$callbackUpdatedAt = $null
-$callbackUrl = $null
 
 function Save-Runtime {
-    $script:runtime = [ordered]@{
+    Write-RuntimeState $runtimePath ([ordered]@{
         launcher_pid = $PID
         launcher_started_at = $script:launcherStartedAt
         watcher_pid = $(if ($script:watcher) { $script:watcher.Id } else { $null })
         watcher_started_at = $(if ($script:watcher) { Get-ProcessStartUtc $script:watcher } else { $null })
-        cloudflared_pid = $(if ($script:tunnel) { $script:tunnel.Id } else { $null })
-        cloudflared_started_at = $(if ($script:tunnel) { Get-ProcessStartUtc $script:tunnel } else { $null })
         started_at = $script:startedAt
-        tunnel_url = $script:tunnelUrl
-        callback_origin = $script:tunnelUrl
-        callback_url = $script:callbackUrl
-        callback_updated_at = $script:callbackUpdatedAt
-        callback_generation = $script:callbackGeneration
-    }
-    Write-RuntimeState $runtimePath $script:runtime
-}
-
-function Start-QuickTunnel([string]$Executable) {
-    $stdout = Join-Path $logs "cloudflared.stdout.log"
-    $stderr = Join-Path $logs "cloudflared.log"
-    Remove-Item $stdout, $stderr -Force -ErrorAction SilentlyContinue
-    $process = Start-Process -FilePath $Executable -ArgumentList @("tunnel", "--url", "http://127.0.0.1:8787") `
-        -PassThru -NoNewWindow -RedirectStandardOutput $stdout -RedirectStandardError $stderr
-    Write-LauncherLog $launcherLog "cloudflared started pid=$($process.Id)"
-    $url = $null
-    $timer = [Diagnostics.Stopwatch]::StartNew()
-    while ($timer.Elapsed.TotalSeconds -lt 30 -and -not $process.HasExited -and -not $url) {
-        Start-Sleep -Milliseconds 250
-        $text = ((Get-Content $stdout, $stderr -Raw -ErrorAction SilentlyContinue) -join "`n")
-        $url = Get-TunnelUrl $text
-    }
-    if ($process.HasExited -or -not $url) {
-        if (-not $process.HasExited) { Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue }
-        throw "Cloudflare Tunnel failed to start or provide a public URL."
-    }
-    return [pscustomobject]@{ Process = $process; Url = $url }
-}
-
-function Apply-RuntimeCallback([string]$Origin) {
-    $response = Update-BackendCallback $Origin $script:runtimeToken
-    if ($response.changed) {
-        $script:callbackGeneration++
-        $script:callbackUpdatedAt = (Get-Date).ToUniversalTime().ToString("o")
-    }
-    $script:callbackUrl = (Assert-PublicOrigin $Origin) + $(if ($env:WEBHOOK_PATH) { $env:WEBHOOK_PATH } else { "/youtube/websub" })
-    Save-Runtime
-    Write-Host "Callback update    OK"
-    Write-Host "WebSub refresh     $(if ([int]$response.requested -gt 0) { 'REQUESTED' } else { 'UNCHANGED' })"
-    Write-Host "Polling fallback   $(if ($script:ytdlp) { 'ACTIVE' } else { 'UNAVAILABLE' })"
-    Write-LauncherLog $launcherLog "runtime callback updated generation=$script:callbackGeneration requested=$($response.requested)"
+    })
 }
 
 try {
     Import-DotEnv (Join-Path $root ".env")
     $python = Get-VenvPython $root
-    $ytdlp = Find-LauncherExecutable $env:YTDLP_PATH (Join-Path $root "tools\yt-dlp.exe") "yt-dlp"
-    $cloudflared = Assert-Cloudflared $root
+    $ytdlp = Assert-YtDlp $root
+    $pollInterval = if ($env:POLL_INTERVAL_SECONDS) { $env:POLL_INTERVAL_SECONDS } else { "10" }
 
     Write-Host "====================================="
     Write-Host "YT_NOTIFI"
     Write-Host "=====================================`n"
-    Write-Host "yt-dlp        $(if ($ytdlp) { 'OK' } else { 'MISSING' })"
-    if (-not $ytdlp) { Write-Host "Polling fallback unavailable" }
+    Write-Host "yt-dlp        OK"
     Write-Host "Watcher       STARTING..."
 
     $watcherOut = Join-Path $logs "watcher.stdout.log"
@@ -96,43 +45,19 @@ try {
     $watcher = Start-Process -FilePath $python -ArgumentList $arguments -WorkingDirectory $root `
         -PassThru -NoNewWindow -RedirectStandardOutput $watcherOut -RedirectStandardError $watcherErr
     Write-LauncherLog $launcherLog "watcher started pid=$($watcher.Id)"
-    $script:tunnelUrl = $null
     Save-Runtime
 
     $health = Wait-LocalHealth $watcher.Id 30
     if ($health -ne "OK") { throw "Watcher health failed: $health. See logs\watcher.stderr.log" }
     Write-Host "Watcher       OK"
+    Write-Host "`nPolling       $pollInterval seconds"
+    Write-Host "Status        RUNNING"
+    Write-Host "`nPress Ctrl+C to stop."
     Write-LauncherLog $launcherLog "watcher health PASS"
 
-    Write-Host "Cloudflared   STARTING..."
-    $startedTunnel = Start-QuickTunnel $cloudflared
-    $tunnel = $startedTunnel.Process
-    $script:tunnelUrl = $startedTunnel.Url
-    Write-Host "Cloudflared   OK"
-    Apply-RuntimeCallback $script:tunnelUrl
-    Write-Host "`nLocal:`nhttp://127.0.0.1:8787"
-    Write-Host "`nTunnel:`n$script:tunnelUrl"
-    $pollInterval = if ($env:POLL_INTERVAL_SECONDS) { $env:POLL_INTERVAL_SECONDS } else { "10" }
-    Write-Host "`nPolling:`n$pollInterval seconds"
-    Write-Host "`nStatus:`nRUNNING"
-    Write-Host "`nPress Ctrl+C to stop."
-    Write-LauncherLog $launcherLog "tunnel health PASS url=$script:tunnelUrl pid=$($tunnel.Id)"
-
-    $tunnelRestarts = 0
     while ($true) {
         Start-Sleep -Seconds 1
         if ($watcher.HasExited) { throw "Watcher exited unexpectedly with code $($watcher.ExitCode)." }
-        if ($tunnel.HasExited) {
-            if ($tunnelRestarts -ge 1) { throw "Cloudflared exited after one restart." }
-            $tunnelRestarts++
-            Write-Host "Cloudflared   RESTARTING (1/1)..."
-            Write-LauncherLog $launcherLog "cloudflared exited; bounded restart"
-            $startedTunnel = Start-QuickTunnel $cloudflared
-            $tunnel = $startedTunnel.Process
-            $script:tunnelUrl = $startedTunnel.Url
-            Apply-RuntimeCallback $script:tunnelUrl
-            Write-Host "Cloudflared   OK`nTunnel:`n$script:tunnelUrl"
-        }
     }
 } catch {
     $exitCode = 1
@@ -140,9 +65,6 @@ try {
     Write-LauncherLog $launcherLog "failure=$($_.Exception.GetType().Name) message=$($_.Exception.Message)"
 } finally {
     Write-LauncherLog $launcherLog "shutdown requested"
-    if ($tunnel -and -not $tunnel.HasExited) {
-        Stop-OwnedProcess $tunnel.Id (Get-ProcessStartUtc $tunnel) "cloudflared" | Out-Null
-    }
     if ($watcher -and -not $watcher.HasExited) {
         Stop-OwnedProcess $watcher.Id (Get-ProcessStartUtc $watcher) "uvicorn app.main:app" | Out-Null
     }

@@ -32,9 +32,11 @@ function Find-LauncherExecutable([string]$Configured, [string]$ProjectPath, [str
     return $null
 }
 
-function Assert-Cloudflared([string]$Root) {
-    $path = Find-LauncherExecutable $env:CLOUDFLARED_PATH (Join-Path $Root "tools\cloudflared.exe") "cloudflared"
-    if (-not $path) { throw "cloudflared.exe missing. Configure CLOUDFLARED_PATH, tools\cloudflared.exe, or PATH." }
+function Assert-YtDlp([string]$Root) {
+    $path = Find-LauncherExecutable $env:YTDLP_PATH (Join-Path $Root "tools\yt-dlp.exe") "yt-dlp"
+    if (-not $path) {
+        throw "yt-dlp is required for YT_NOTIFI polling.`nConfigure YTDLP_PATH or place yt-dlp.exe in tools\"
+    }
     return $path
 }
 
@@ -112,42 +114,6 @@ function Wait-LocalHealth(
         Start-Sleep -Milliseconds 250
     }
     return "TIMEOUT"
-}
-
-function Get-TunnelUrl([string]$Text) {
-    $match = [regex]::Match($Text, 'https://[a-z0-9-]+\.trycloudflare\.com', 'IgnoreCase')
-    if ($match.Success) { return $match.Value }
-    return $null
-}
-
-function New-RuntimeToken {
-    $bytes = New-Object byte[] 32
-    [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
-    return [Convert]::ToBase64String($bytes)
-}
-
-function Assert-PublicOrigin([string]$Origin) {
-    $uri = $null
-    if (-not [Uri]::TryCreate($Origin, [UriKind]::Absolute, [ref]$uri) -or
-        $uri.Scheme -ne "https" -or -not $uri.Host -or $uri.UserInfo -or
-        $uri.AbsolutePath -ne "/" -or $uri.Query -or $uri.Fragment) {
-        throw "Runtime callback must be an HTTPS origin without path, query, fragment, or credentials."
-    }
-    return $uri.GetLeftPart([UriPartial]::Authority)
-}
-
-function Update-BackendCallback(
-    [string]$Origin,
-    [string]$Token,
-    [scriptblock]$Invoker = {
-        param($body, $headers)
-        Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8787/internal/runtime-callback" `
-            -ContentType "application/json" -Body $body -Headers $headers -TimeoutSec 30
-    }
-) {
-    $validated = Assert-PublicOrigin $Origin
-    $body = @{ public_origin = $validated } | ConvertTo-Json -Compress
-    return & $Invoker $body @{ "X-YT-Notifi-Runtime-Token" = $Token }
 }
 
 function Protect-LogText([string]$Text) {

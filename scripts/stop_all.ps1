@@ -16,9 +16,6 @@ if ($runtime.launcher_pid -and (Stop-OwnedProcess ([int]$runtime.launcher_pid) (
     $stopped += "launcher"
     if (-not $WhatIf) { Start-Sleep -Seconds 2 }
 }
-if ($runtime.cloudflared_pid -and (Stop-OwnedProcess ([int]$runtime.cloudflared_pid) ([string]$runtime.cloudflared_started_at) "cloudflared" -WhatIf:$WhatIf)) {
-    $stopped += "cloudflared"
-}
 if ($runtime.watcher_pid -and (Stop-OwnedProcess ([int]$runtime.watcher_pid) ([string]$runtime.watcher_started_at) "uvicorn app.main:app" -WhatIf:$WhatIf)) {
     $stopped += "watcher"
 }

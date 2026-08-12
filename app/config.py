@@ -1,13 +1,11 @@
 from __future__ import annotations
 
 import json
-import ipaddress
 import os
 import re
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
-from urllib.parse import urlsplit
 
 from dotenv import load_dotenv
 
@@ -19,8 +17,6 @@ CHANNEL_ID_RE = re.compile(r"^UC[A-Za-z0-9_-]{22}$")
 class Settings:
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
-    public_callback_url: str = ""
-    webhook_path: str = "/youtube/websub"
     host: str = "127.0.0.1"
     port: int = 8787
     channels_file: Path = ROOT / "config" / "channels.json"
@@ -29,19 +25,13 @@ class Settings:
     ytdlp_path: str = ""
     poll_interval_seconds: int = 10
     poll_max_concurrency: int = 3
-    launcher_runtime_token: str = ""
 
     @classmethod
     def from_env(cls) -> "Settings":
         load_dotenv(ROOT / ".env")
-        path = os.getenv("WEBHOOK_PATH", "/youtube/websub")
-        if not path.startswith("/"):
-            raise ValueError("WEBHOOK_PATH must start with /")
         return cls(
             telegram_bot_token=os.getenv("TELEGRAM_BOT_TOKEN", ""),
             telegram_chat_id=os.getenv("TELEGRAM_CHAT_ID", ""),
-            public_callback_url=os.getenv("PUBLIC_CALLBACK_URL", "").rstrip("/"),
-            webhook_path=path,
             host=os.getenv("HOST", "127.0.0.1"),
             port=int(os.getenv("PORT", "8787")),
             channels_file=Path(os.getenv("CHANNELS_FILE", ROOT / "config" / "channels.json")),
@@ -49,7 +39,6 @@ class Settings:
             ytdlp_path=os.getenv("YTDLP_PATH", ""),
             poll_interval_seconds=max(1, int(os.getenv("POLL_INTERVAL_SECONDS", "10"))),
             poll_max_concurrency=max(1, int(os.getenv("POLL_MAX_CONCURRENCY", "3"))),
-            launcher_runtime_token=os.getenv("LAUNCHER_RUNTIME_TOKEN", ""),
         )
 
 
@@ -84,30 +73,3 @@ def find_ytdlp(settings: Settings) -> Path | None:
             return Path(candidate).resolve()
     found = shutil.which("yt-dlp") or shutil.which("yt-dlp.exe")
     return Path(found).resolve() if found else None
-
-
-def validate_public_origin(value: str) -> str:
-    value = value.rstrip("/")
-    parsed = urlsplit(value)
-    if not value or parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
-        raise ValueError("PUBLIC_CALLBACK_URL must be a valid HTTPS origin")
-    try:
-        parsed.port
-    except ValueError as exc:
-        raise ValueError("PUBLIC_CALLBACK_URL has an invalid port") from exc
-    if any(character.isspace() for character in parsed.hostname):
-        raise ValueError("PUBLIC_CALLBACK_URL has an invalid hostname")
-    if parsed.query or parsed.fragment or parsed.path not in {"", "/"}:
-        raise ValueError("PUBLIC_CALLBACK_URL must not contain a path, query, or fragment")
-    hostname = parsed.hostname.lower()
-    try:
-        is_local = ipaddress.ip_address(hostname).is_loopback
-    except ValueError:
-        is_local = hostname == "localhost" or hostname.endswith(".localhost")
-    if is_local:
-        raise ValueError("PUBLIC_CALLBACK_URL must not use localhost")
-    return value
-
-
-def public_callback(settings: Settings) -> str:
-    return validate_public_origin(settings.public_callback_url) + settings.webhook_path

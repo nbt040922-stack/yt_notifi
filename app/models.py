@@ -9,4 +9,4 @@ class VideoEvent:
     published: str
     updated: str
     url: str
-    source: str = "websub"
+    source: str = "poll"

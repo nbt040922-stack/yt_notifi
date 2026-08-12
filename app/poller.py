@@ -8,10 +8,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .config import CHANNEL_ID_RE, Channel, Settings, enabled_channels, find_ytdlp
+from .detector import VIDEO_ID_RE, handle_detected_video
 from .models import VideoEvent
 from .state import StateStore
 from .telegram import TelegramNotifier
-from .webhook import VIDEO_ID_RE, handle_detected_video
 
 logger = logging.getLogger("yt_notifi")
 
@@ -125,7 +125,7 @@ class ChannelPoller:
 
     async def run(self, stop: asyncio.Event) -> None:
         if not self.executable:
-            logger.warning("POLL_FAILED yt-dlp unavailable; WebSub remains active")
+            logger.error("POLL_FAILED yt-dlp unavailable")
             await stop.wait()
             return
         while not stop.is_set():

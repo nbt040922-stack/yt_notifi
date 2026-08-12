@@ -7,7 +7,6 @@ from app.config import Settings
 
 CHANNEL_ID = "UC_x5XG1OV2P6uZZ5FSM9Ttw"
 VIDEO_ID = "dQw4w9WgXcQ"
-FIXTURE = Path(__file__).parent / "fixtures" / "youtube_event.xml"
 
 
 @pytest.fixture
@@ -20,7 +19,6 @@ def settings(tmp_path: Path) -> Settings:
     return Settings(
         telegram_bot_token="secret-token",
         telegram_chat_id="12345",
-        public_callback_url="https://tunnel.example",
         channels_file=channels,
         state_db=tmp_path / "state.db",
         enable_background_tasks=False,

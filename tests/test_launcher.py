@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import subprocess
 import uuid
-import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -38,20 +37,12 @@ def test_launcher_venv_missing_is_explicit(tmp_path):
     assert "Run setup first" in result.stdout
 
 
-def test_ytdlp_missing_is_degraded_not_exception(tmp_path):
+def test_ytdlp_missing_is_fatal(tmp_path):
     result = ps(
-        f"$found=Find-LauncherExecutable '' '{quoted(tmp_path / 'yt-dlp.exe')}' 'missing-yt-dlp-test'; "
-        "if ($null -eq $found) { 'MISSING' }"
+        "$env:YTDLP_PATH=''; "
+        f"try {{ Assert-YtDlp '{quoted(tmp_path)}' }} catch {{ $_.Exception.Message }}"
     )
-    assert result.stdout.strip() == "MISSING"
-
-
-def test_cloudflared_missing_is_fatal(tmp_path):
-    result = ps(
-        f"$env:CLOUDFLARED_PATH=''; try {{ Assert-Cloudflared '{quoted(tmp_path)}' }} "
-        "catch { $_.Exception.Message }"
-    )
-    assert "cloudflared.exe missing" in result.stdout
+    assert "yt-dlp is required for YT_NOTIFI polling" in result.stdout
 
 
 def test_duplicate_launcher_mutex():
@@ -101,18 +92,13 @@ def test_watcher_exit_before_health():
     assert result.stdout.strip() == "EXITED"
 
 
-def test_tunnel_url_extraction():
-    result = ps("Get-TunnelUrl 'INF ready https://quick-test-123.trycloudflare.com connected'")
-    assert result.stdout.strip() == "https://quick-test-123.trycloudflare.com"
-
-
 def test_runtime_json_written_and_read(tmp_path):
     runtime = tmp_path / "runtime.json"
     result = ps(
-        f"Write-RuntimeState '{quoted(runtime)}' ([pscustomobject]@{{launcher_pid=1;tunnel_url='https://x.trycloudflare.com'}}); "
-        f"(Read-RuntimeState '{quoted(runtime)}').tunnel_url"
+        f"Write-RuntimeState '{quoted(runtime)}' ([pscustomobject]@{{launcher_pid=1;watcher_pid=2;started_at='now'}}); "
+        f"$r=Read-RuntimeState '{quoted(runtime)}'; @($r.psobject.Properties.Name) -join ','"
     )
-    assert result.stdout.strip() == "https://x.trycloudflare.com"
+    assert set(result.stdout.strip().split(",")) == {"launcher_pid", "watcher_pid", "started_at"}
     assert runtime.exists()
 
 
@@ -145,20 +131,23 @@ def test_launcher_log_redacts_secrets(tmp_path):
     assert result.stdout.count("[REDACTED]") == 2
 
 
-def test_launcher_runtime_origin_validation():
-    valid = ps("Assert-PublicOrigin 'https://quick-test.trycloudflare.com/'")
-    invalid = ps("try { Assert-PublicOrigin 'https://quick-test.trycloudflare.com/path' } catch { 'REJECTED' }")
-    assert valid.stdout.strip() == "https://quick-test.trycloudflare.com"
-    assert invalid.stdout.strip() == "REJECTED"
+def test_launcher_starts_no_cloudflare_or_callback_process():
+    script = (ROOT / "scripts" / "start_all.ps1").read_text(encoding="utf-8").lower()
+    assert "cloudflared" not in script
+    assert "tunnel" not in script
+    assert "callback" not in script
 
 
-def test_launcher_callback_update_sends_token_without_persisting_it():
-    result = ps(
-        "$invoke={param($body,$headers) [pscustomobject]@{body=$body;token=$headers['X-YT-Notifi-Runtime-Token'];changed=$true;requested=1}}; "
-        "$r=Update-BackendCallback 'https://quick-test.trycloudflare.com' 'runtime-secret' $invoke; "
-        "@{body=$r.body;token_ok=($r.token -eq 'runtime-secret');changed=$r.changed;requested=$r.requested}|ConvertTo-Json -Compress"
-    )
-    data = json.loads(result.stdout)
-    assert json.loads(data["body"])["public_origin"] == "https://quick-test.trycloudflare.com"
-    assert data["token_ok"] is True
-    assert data["changed"] is True
+def test_runtime_state_is_polling_only():
+    script = (ROOT / "scripts" / "start_all.ps1").read_text(encoding="utf-8").lower()
+    assert "launcher_pid" in script
+    assert "watcher_pid" in script
+    for removed in ("cloudflared_pid", "tunnel_url", "callback_url", "callback_generation"):
+        assert removed not in script
+
+
+def test_stop_script_only_targets_launcher_and_watcher():
+    script = (ROOT / "scripts" / "stop_all.ps1").read_text(encoding="utf-8").lower()
+    assert "uvicorn app.main:app" in script
+    assert "start_all.ps1" in script
+    assert "cloudflared" not in script

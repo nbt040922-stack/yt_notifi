@@ -8,8 +8,7 @@ from unittest.mock import Mock
 from app.config import Channel, enabled_channels
 from app.poller import ChannelPoller, channel_videos_url, parse_ytdlp_result, probe_channel
 from app.state import StateStore
-from app.webhook import process_event
-from tests.conftest import CHANNEL_ID, FIXTURE, VIDEO_ID
+from tests.conftest import CHANNEL_ID, VIDEO_ID
 
 NEW_VIDEO = "abcdefghijk"
 NEWEST_VIDEO = "zyxwvutsrqp"
@@ -81,26 +80,13 @@ def test_new_and_multiple_videos_after_baseline_notify_in_order(settings, tmp_pa
     assert state.get_video(NEW_VIDEO)["detection_source"] == "poll"
 
 
-def test_websub_first_then_poll_sends_once(settings, tmp_path):
-    poller, state, notifier = configured(
-        settings, tmp_path, lambda *_args, **_kwargs: completed(payload((VIDEO_ID, "Same", {})))
-    )
-    event = __import__("app.webhook", fromlist=["parse_atom"]).parse_atom(FIXTURE.read_bytes())[0]
-    process_event(event, state, notifier, {CHANNEL_ID: "Test"})
-    poller.poll_channel(poller.channels[0])
-    notifier.send_video.assert_called_once()
-
-
-def test_poll_first_then_websub_sends_once(settings, tmp_path):
+def test_duplicate_poll_does_not_notify_twice(settings, tmp_path):
     outputs = iter([payload((VIDEO_ID, "Old", {})), payload((NEW_VIDEO, "New", {}), (VIDEO_ID, "Old", {}))])
     poller, state, notifier = configured(settings, tmp_path, lambda *_args, **_kwargs: completed(next(outputs)))
     poller.poll_channel(poller.channels[0])
     poller.poll_channel(poller.channels[0])
-    poll_event = state.get_video(NEW_VIDEO)
-    websub_event = __import__("app.models", fromlist=["VideoEvent"]).VideoEvent(
-        NEW_VIDEO, CHANNEL_ID, poll_event["title"], "", "", f"https://www.youtube.com/watch?v={NEW_VIDEO}"
-    )
-    process_event(websub_event, state, notifier, {CHANNEL_ID: "Test"})
+    poller.runner = lambda *_args, **_kwargs: completed(payload((NEW_VIDEO, "New", {}), (VIDEO_ID, "Old", {})))
+    poller.poll_channel(poller.channels[0])
     notifier.send_video.assert_called_once()
 
 
