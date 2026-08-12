@@ -81,9 +81,32 @@ class StateStore:
                     source_channel_id TEXT NOT NULL,
                     channel_name TEXT NOT NULL,
                     output_dir TEXT NOT NULL,
-                    error TEXT
+                    error TEXT,
+                    download_external_id TEXT,
+                    download_state TEXT,
+                    download_progress REAL NOT NULL DEFAULT 0,
+                    downloaded_file_path TEXT,
+                    download_error TEXT,
+                    updated_at TEXT,
+                    download_attempts INTEGER NOT NULL DEFAULT 0,
+                    next_download_attempt_at TEXT
                 )"""
             )
+            job_columns = {row[1] for row in db.execute("PRAGMA table_info(processing_jobs)")}
+            job_additions = {
+                "download_external_id": "TEXT",
+                "download_state": "TEXT",
+                "download_progress": "REAL NOT NULL DEFAULT 0",
+                "downloaded_file_path": "TEXT",
+                "download_error": "TEXT",
+                "updated_at": "TEXT",
+                "download_attempts": "INTEGER NOT NULL DEFAULT 0",
+                "next_download_attempt_at": "TEXT",
+            }
+            for name, sql_type in job_additions.items():
+                if name not in job_columns:
+                    db.execute(f"ALTER TABLE processing_jobs ADD COLUMN {name} {sql_type}")
+            db.execute("UPDATE processing_jobs SET updated_at=created_at WHERE updated_at IS NULL")
 
     def record_event(self, event: VideoEvent, baseline: bool = False) -> bool:
         now = datetime.now(timezone.utc)
@@ -136,16 +159,50 @@ class StateStore:
             cursor = db.execute(
                 """INSERT OR IGNORE INTO processing_jobs
                    (created_at, status, video_id, video_url, video_title, source_channel_id,
-                    channel_name, output_dir, error)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    channel_name, output_dir, error, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (utc_now(), status, event.video_id, event.url, event.title, event.channel_id,
-                 channel_name, output_dir, error),
+                 channel_name, output_dir, error, utc_now()),
             )
             return cursor.rowcount == 1
 
     def processing_jobs(self) -> list[sqlite3.Row]:
         with self._connect() as db:
             return list(db.execute("SELECT * FROM processing_jobs ORDER BY id DESC"))
+
+    def download_jobs_due(self, now: str) -> list[sqlite3.Row]:
+        with self._connect() as db:
+            return list(db.execute(
+                """SELECT * FROM processing_jobs
+                   WHERE status IN ('QUEUED', 'DOWNLOAD_PENDING', 'DOWNLOADING')
+                     AND (next_download_attempt_at IS NULL OR next_download_attempt_at <= ?)
+                   ORDER BY id""",
+                (now,),
+            ))
+
+    def update_download_job(
+        self,
+        job_id: int,
+        *,
+        status: str,
+        external_id: str | None = None,
+        download_state: str | None = None,
+        progress: float = 0,
+        downloaded_file_path: str | None = None,
+        download_error: str | None = None,
+        attempts: int = 0,
+        next_attempt_at: str | None = None,
+    ) -> None:
+        with self._connect() as db:
+            db.execute(
+                """UPDATE processing_jobs SET status=?,
+                   download_external_id=COALESCE(?, download_external_id), download_state=?,
+                   download_progress=?, downloaded_file_path=COALESCE(?, downloaded_file_path),
+                   download_error=?, updated_at=?, download_attempts=?, next_download_attempt_at=?
+                   WHERE id=?""",
+                (status, external_id, download_state, progress, downloaded_file_path,
+                 download_error, utc_now(), attempts, next_attempt_at, job_id),
+            )
 
     def get_poll_state(self, channel_id: str) -> sqlite3.Row | None:
         with self._connect() as db:

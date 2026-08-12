@@ -14,6 +14,7 @@ from .channel_store import ChannelStore, ChannelStoreError
 from .channel_resolver import ChannelResolveError, ResolvedChannel, resolve_channel
 from .config import Settings
 from .detector import resume_notifications
+from .download_worker import DownloadHandoffWorker
 from .poller import ChannelPoller
 from .state import StateStore
 from .telegram import TelegramNotifier
@@ -72,6 +73,7 @@ def create_app(
     except ChannelStoreError:
         channels = []
     poller = ChannelPoller(settings, state, notifier, channels, channel_loader=channel_store.enabled)
+    download_worker = DownloadHandoffWorker(settings, state)
 
     async def notification_retry_loop() -> None:
         while True:
@@ -87,7 +89,11 @@ def create_app(
             raise RuntimeError("yt-dlp is required for YT_NOTIFI polling")
         stop = asyncio.Event()
         tasks = (
-            [asyncio.create_task(notification_retry_loop()), asyncio.create_task(poller.run(stop))]
+            [
+                asyncio.create_task(notification_retry_loop()),
+                asyncio.create_task(poller.run(stop)),
+                asyncio.create_task(download_worker.run(stop)),
+            ]
             if settings.enable_background_tasks else []
         )
         yield
