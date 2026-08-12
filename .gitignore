@@ -7,6 +7,8 @@ state/*.db
 state/*.db-*
 state/runtime.json
 state/runtime.json.tmp
+state/production-runtime.json
+state/production-runtime.json.tmp
 logs/*.log
 tools/*.exe
 tools/yt-dlp

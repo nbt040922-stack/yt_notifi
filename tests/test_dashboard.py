@@ -38,6 +38,13 @@ def test_dashboard_loads(settings):
     assert "+ Thêm kênh" in response.text
 
 
+def test_dashboard_accepts_lan_host_header(settings):
+    response = TestClient(create_app(settings)).get(
+        "/", headers={"host": "192.168.1.31:8787"}
+    )
+    assert response.status_code == 200 and "YT_NOTIFI" in response.text
+
+
 def test_get_channels_includes_runtime_state(settings):
     client, state = api(settings)
     waiting = client.get("/api/channels").json()[0]

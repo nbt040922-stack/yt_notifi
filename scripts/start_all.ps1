@@ -32,6 +32,8 @@ try {
     $python = Get-VenvPython $root
     $ytdlp = Assert-YtDlp $root
     $pollInterval = if ($env:POLL_INTERVAL_SECONDS) { $env:POLL_INTERVAL_SECONDS } else { "10" }
+    $bindHost = if ($env:YT_NOTIFI_BIND_HOST) { $env:YT_NOTIFI_BIND_HOST } else { "127.0.0.1" }
+    $port = if ($env:YT_NOTIFI_PORT) { [int]$env:YT_NOTIFI_PORT } else { 8787 }
 
     Write-Host "====================================="
     Write-Host "YT_NOTIFI"
@@ -41,17 +43,17 @@ try {
 
     $watcherOut = Join-Path $logs "watcher.stdout.log"
     $watcherErr = Join-Path $logs "watcher.stderr.log"
-    $arguments = @("-m", "uvicorn", "app.main:app", "--app-dir", "`"$root`"", "--host", "127.0.0.1", "--port", "8787")
+    $arguments = @("-m", "uvicorn", "app.main:app", "--app-dir", "`"$root`"", "--host", $bindHost, "--port", $port)
     $watcher = Start-Process -FilePath $python -ArgumentList $arguments -WorkingDirectory $root `
         -PassThru -NoNewWindow -RedirectStandardOutput $watcherOut -RedirectStandardError $watcherErr
     Write-LauncherLog $launcherLog "watcher started pid=$($watcher.Id)"
     Save-Runtime
 
-    $health = Wait-LocalHealth $watcher.Id 30
+    $health = Wait-ServiceHealth $watcher.Id "http://127.0.0.1:$port/health" 30
     if ($health -ne "OK") { throw "Watcher health failed: $health. See logs\watcher.stderr.log" }
     Write-Host "Watcher       OK"
     Write-Host "`nPolling       $pollInterval seconds"
-    Write-Host "Dashboard     http://127.0.0.1:8787/"
+    Write-Host "Dashboard     http://127.0.0.1:$port/"
     Write-Host "Status        RUNNING"
     Write-Host "`nPress Ctrl+C to stop."
     Write-LauncherLog $launcherLog "watcher health PASS"

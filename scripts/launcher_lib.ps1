@@ -116,6 +116,65 @@ function Wait-LocalHealth(
     return "TIMEOUT"
 }
 
+function Wait-ServiceHealth(
+    [int]$ProcessId,
+    [string]$Url,
+    [int]$TimeoutSeconds = 45,
+    [scriptblock]$IsRunning = { param($id) [bool](Get-Process -Id $id -ErrorAction SilentlyContinue) },
+    [scriptblock]$HealthProbe = {
+        param($probeUrl)
+        $health = Invoke-RestMethod $probeUrl -TimeoutSec 2
+        return $health.status -eq "ok"
+    }
+) {
+    $timer = [Diagnostics.Stopwatch]::StartNew()
+    while ($timer.Elapsed.TotalSeconds -lt $TimeoutSeconds) {
+        if (-not (& $IsRunning $ProcessId)) { return "EXITED" }
+        try {
+            if (& $HealthProbe $Url) { return "OK" }
+        } catch {}
+        Start-Sleep -Milliseconds 500
+    }
+    return "TIMEOUT"
+}
+
+function Test-LocalPortListening([int]$Port) {
+    return [bool](Get-NetTCPConnection -State Listen -LocalPort $Port -ErrorAction SilentlyContinue)
+}
+
+function Test-PrivateIPv4([string]$Address) {
+    try { $bytes = [Net.IPAddress]::Parse($Address).GetAddressBytes() } catch { return $false }
+    if ($bytes.Count -ne 4) { return $false }
+    return (
+        $bytes[0] -eq 10 -or
+        ($bytes[0] -eq 172 -and $bytes[1] -ge 16 -and $bytes[1] -le 31) -or
+        ($bytes[0] -eq 192 -and $bytes[1] -eq 168)
+    )
+}
+
+function Get-PrivateLanIPv4([object[]]$Candidates) {
+    if (-not $Candidates) {
+        $Candidates = @(
+            foreach ($config in Get-NetIPConfiguration -ErrorAction SilentlyContinue) {
+                foreach ($address in @($config.IPv4Address)) {
+                    [pscustomobject]@{
+                        Address = $address.IPAddress
+                        Interface = "$($config.InterfaceAlias) $($config.NetAdapter.InterfaceDescription)"
+                        HasDefaultRoute = [bool]$config.IPv4DefaultGateway
+                        Metric = [int]$config.NetIPv4Interface.InterfaceMetric
+                        IsUp = $config.NetAdapter.Status -eq "Up"
+                    }
+                }
+            }
+        )
+    }
+    $selected = $Candidates | Where-Object {
+        $_.IsUp -and (Test-PrivateIPv4 ([string]$_.Address)) -and
+        ([string]$_.Interface) -notmatch '(?i)vpn|virtual|vethernet|loopback|hyper-v|wsl|bluetooth'
+    } | Sort-Object @{Expression = { -not [bool]$_.HasDefaultRoute }}, Metric | Select-Object -First 1
+    return $(if ($selected) { [string]$selected.Address } else { $null })
+}
+
 function Protect-LogText([string]$Text) {
     foreach ($secret in @($env:TELEGRAM_BOT_TOKEN, $env:TELEGRAM_CHAT_ID)) {
         if ($secret) { $Text = $Text.Replace($secret, "[REDACTED]") }
@@ -136,5 +195,26 @@ function Stop-OwnedProcess([int]$ProcessId, [string]$StartedAt, [string]$Marker,
     if (Get-Process -Id $ProcessId -ErrorAction SilentlyContinue) {
         Stop-Process -Id $ProcessId -Force -ErrorAction SilentlyContinue
     }
+    return $true
+}
+
+function Stop-OwnedProcessTree(
+    [int]$ProcessId, [string]$StartedAt, [string]$Marker, [switch]$WhatIf
+) {
+    if (-not (Test-RuntimeProcess $ProcessId $StartedAt $Marker)) { return $false }
+    if ($WhatIf) { return $true }
+    $all = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue)
+    $owned = [Collections.Generic.List[int]]::new()
+    function Add-Children([int]$ParentId) {
+        foreach ($child in @($all | Where-Object ParentProcessId -eq $ParentId)) {
+            Add-Children $child.ProcessId
+            $owned.Add([int]$child.ProcessId)
+        }
+    }
+    Add-Children $ProcessId
+    foreach ($id in @($owned)) { Stop-Process -Id $id -Force -ErrorAction SilentlyContinue }
+    Stop-Process -Id $ProcessId -ErrorAction SilentlyContinue
+    try { (Get-Process -Id $ProcessId -ErrorAction Stop).WaitForExit(5000) } catch { return $true }
+    Stop-Process -Id $ProcessId -Force -ErrorAction SilentlyContinue
     return $true
 }

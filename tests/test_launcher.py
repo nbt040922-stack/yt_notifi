@@ -4,6 +4,8 @@ import subprocess
 import uuid
 from pathlib import Path
 
+from app.config import Settings
+
 ROOT = Path(__file__).resolve().parent.parent
 LIB = ROOT / "scripts" / "launcher_lib.ps1"
 
@@ -151,3 +153,80 @@ def test_stop_script_only_targets_launcher_and_watcher():
     assert "uvicorn app.main:app" in script
     assert "start_all.ps1" in script
     assert "cloudflared" not in script
+
+
+def test_production_health_timeout():
+    result = ps("Wait-ServiceHealth 1 'http://127.0.0.1:9999/health' 1 { $true } { $false }")
+    assert result.stdout.strip() == "TIMEOUT"
+
+
+def test_configurable_dashboard_bind(monkeypatch):
+    monkeypatch.setenv("YT_NOTIFI_BIND_HOST", "0.0.0.0")
+    monkeypatch.setenv("YT_NOTIFI_PORT", "9876")
+    configured = Settings.from_env()
+    assert (configured.host, configured.port) == ("0.0.0.0", 9876)
+
+
+def test_lan_address_prefers_default_route_and_ignores_virtual():
+    result = ps(
+        "$items=@("
+        "[pscustomobject]@{Address='192.168.1.31';Interface='Ethernet';HasDefaultRoute=$true;Metric=25;IsUp=$true},"
+        "[pscustomobject]@{Address='10.0.0.9';Interface='vEthernet WSL';HasDefaultRoute=$true;Metric=1;IsUp=$true},"
+        "[pscustomobject]@{Address='172.20.0.4';Interface='Wi-Fi';HasDefaultRoute=$false;Metric=5;IsUp=$true});"
+        "Get-PrivateLanIPv4 $items"
+    )
+    assert result.stdout.strip() == "192.168.1.31"
+
+
+def test_production_startup_order_and_local_health_urls():
+    script = (ROOT / "scripts" / "start_production.ps1").read_text(encoding="utf-8")
+    assert script.index("8790/health") < script.index("8791/health") < script.index(":$port/health")
+    assert "http://127.0.0.1:8790/health" in script
+    assert "http://127.0.0.1:8791/health" in script
+    assert "http://127.0.0.1:$port/health" in script
+    assert '"--host", $bindHost' in script
+    assert script.index("Test-LocalPortListening 8790") < script.index("Start-Process -FilePath $electron")
+    assert script.index("Test-LocalPortListening 8791") < script.index("Start-Process -FilePath $silencePython")
+    assert script.index("Test-LocalPortListening $port") < script.index("Start-Process -FilePath $watcherPython")
+
+    legacy = (ROOT / "scripts" / "start_all.ps1").read_text(encoding="utf-8")
+    assert "$env:YT_NOTIFI_BIND_HOST" in legacy and "$env:YT_NOTIFI_PORT" in legacy
+    assert "http://127.0.0.1:$port/health" in legacy
+
+
+def test_production_duplicate_guard_and_failure_cleanup():
+    script = (ROOT / "scripts" / "start_production.ps1").read_text(encoding="utf-8")
+    assert "Local\\CONTENTOPS_PRODUCTION_LAUNCHER" in script
+    assert "Content Ops production is already running." in script
+    final = script.index("} finally {")
+    assert script.index("Stop-ProductionChildren", final) > final
+
+
+def test_stop_order_and_owned_process_validation():
+    script = (ROOT / "scripts" / "stop_production.ps1").read_text(encoding="utf-8")
+    assert script.index('"watcher"') < script.index('"silence"') < script.index('"ytdownload"')
+    assert "Stop-OwnedProcessTree" in script and "production-runtime.json" in script
+
+
+def test_startup_task_install_is_idempotent_and_user_scoped():
+    script = (ROOT / "scripts" / "install_windows_startup.ps1").read_text(encoding="utf-8")
+    assert '"ContentOps Production"' in script
+    assert "-AtLogOn -User $user" in script
+    assert "-LogonType Interactive" in script
+    assert "-StartupDelaySeconds 20" in script
+    assert "-Force" in script
+
+
+def test_production_scripts_parse():
+    names = (
+        "start_production.ps1", "stop_production.ps1", "production_status.ps1",
+        "setup_lan_access.ps1", "install_windows_startup.ps1", "uninstall_windows_startup.ps1",
+    )
+    for name in names:
+        path = quoted(ROOT / "scripts" / name)
+        result = subprocess.run(
+            ["powershell.exe", "-NoProfile", "-Command",
+             f"$e=$null; [Management.Automation.Language.Parser]::ParseFile('{path}',[ref]$null,[ref]$e)|Out-Null; $e.Count"],
+            capture_output=True, text=True, check=True,
+        )
+        assert result.stdout.strip() == "0", name
