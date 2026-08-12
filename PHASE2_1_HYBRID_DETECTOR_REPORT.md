@@ -47,11 +47,21 @@ Thông báo giữ định dạng ngắn, thêm `Detected via: POLL` hoặc `Dete
 
 ## Live test thực tế
 
-- Local `/health` trên watcher đang chạy: **PASS** (`status=ok`, `service=YT_NOTIFI`). Tiến trình hiện có không bị dừng hoặc khởi động lại.
-- Không quan sát upload public mới end-to-end trong phiên triển khai này.
-- Không ghi nhận nguồn phát hiện thật hoặc latency thật.
-- `tools/yt-dlp.exe`: chưa có tại thời điểm kiểm tra.
-- Trạng thái: **LIVE VALIDATION REQUIRED**.
+- Local `/health`: **PASS** (`status=ok`, `service=YT_NOTIFI`)
+- Public `/health`: **PASS**
+- Subscription kênh test `UCLW33DfyxqIM4flkD-whcew`: **ACTIVE**
+- Telegram: **configured**
+- yt-dlp: **AVAILABLE**
+- Poll baseline video `qdGsT4r8J9o` (`PART 1`): `baseline=1`, `notification_attempts=0`, không gửi Telegram
+- Upload public mới `ipGCOiXtNWc` (`PART 2`): phát hiện thật qua **POLL** lúc `2026-08-12T09:03:21.860750+00:00`
+- Telegram gửi thành công lúc khoảng `2026-08-12T09:03:23.004+00:00`: **một lần**, `notification_attempts=1`, `notification_sent=1`
+- Thời gian từ detector đến Telegram: khoảng **1,14 giây**
+- Các poll lặp từ `16:03:34` đến ít nhất `16:06:21` đều ghi `POLL_DUPLICATE`; không gửi lại
+- Poller từng gặp `CalledProcessError`, backoff tới 60 giây, sau đó ghi `POLL_RECOVERED` và trở lại hoạt động bình thường
+- Nguồn phát hiện thực tế: **POLL**
+- Kết quả end-to-end: **PASS**
+
+yt-dlp không trả `published_at` cho video test, nên không thể tính chính xác thời gian từ lúc video xuất hiện công khai đến lúc detector phát hiện. Không suy diễn latency này từ thời điểm bấm Publish.
 
 ## Giới hạn
 
@@ -59,7 +69,7 @@ Thông báo giữ định dạng ngắn, thêm `Detected via: POLL` hoặc `Dete
 - Poller chỉ thấy nội dung xuất hiện trên trang `/channel/<ID>/videos` mà yt-dlp đọc được.
 - Retry Telegram có thể kéo dài một probe đang xử lý, nhưng concurrency giới hạn giữ kênh khác hoạt động.
 
-## Lệnh live validation
+## Lệnh tái kiểm tra live
 
 Đặt yt-dlp tại `tools/yt-dlp.exe` hoặc cấu hình `YTDLP_PATH`. Sau đó:
 
@@ -76,6 +86,6 @@ Get-Content .\logs\yt_notifi.log -Wait
 .\scripts\status.ps1
 ```
 
-Yêu cầu đạt: log có `POLL_NEW_VIDEO` hoặc WebSub `NEW_VIDEO`, Telegram nhận đúng một thông báo, poll lặp không gửi lại.
+Kết quả đạt khi log có `POLL_NEW_VIDEO` hoặc WebSub `NEW_VIDEO`, Telegram nhận đúng một thông báo, poll lặp không gửi lại.
 
-PHASE 2.1 IMPLEMENTATION COMPLETE — LIVE VALIDATION REQUIRED
+PHASE 2.1 COMPLETE
