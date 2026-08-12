@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from .channel_store import ChannelStore, ChannelStoreError
 from .channel_resolver import ChannelResolveError, ResolvedChannel, resolve_channel
+from .cleanup_worker import CleanupWorker
 from .config import Settings
 from .detector import resume_notifications
 from .download_worker import DownloadHandoffWorker
@@ -76,6 +77,7 @@ def create_app(
     poller = ChannelPoller(settings, state, notifier, channels, channel_loader=channel_store.enabled)
     download_worker = DownloadHandoffWorker(settings, state)
     process_worker = ProcessHandoffWorker(settings, state)
+    cleanup_worker = CleanupWorker(settings, state)
 
     async def notification_retry_loop() -> None:
         while True:
@@ -96,6 +98,7 @@ def create_app(
                 asyncio.create_task(poller.run(stop)),
                 asyncio.create_task(download_worker.run(stop)),
                 asyncio.create_task(process_worker.run(stop)),
+                asyncio.create_task(cleanup_worker.run(stop)),
             ]
             if settings.enable_background_tasks else []
         )

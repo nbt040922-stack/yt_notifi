@@ -97,7 +97,14 @@ class StateStore:
                     processed_files_json TEXT,
                     process_error TEXT,
                     process_attempts INTEGER NOT NULL DEFAULT 0,
-                    next_process_attempt_at TEXT
+                    next_process_attempt_at TEXT,
+                    cleanup_state TEXT,
+                    cleanup_error TEXT,
+                    cleanup_at TEXT,
+                    source_deleted INTEGER NOT NULL DEFAULT 0,
+                    cleanup_bytes_freed INTEGER,
+                    cleanup_attempts INTEGER NOT NULL DEFAULT 0,
+                    next_cleanup_attempt_at TEXT
                 )"""
             )
             job_columns = {row[1] for row in db.execute("PRAGMA table_info(processing_jobs)")}
@@ -118,6 +125,13 @@ class StateStore:
                 "process_error": "TEXT",
                 "process_attempts": "INTEGER NOT NULL DEFAULT 0",
                 "next_process_attempt_at": "TEXT",
+                "cleanup_state": "TEXT",
+                "cleanup_error": "TEXT",
+                "cleanup_at": "TEXT",
+                "source_deleted": "INTEGER NOT NULL DEFAULT 0",
+                "cleanup_bytes_freed": "INTEGER",
+                "cleanup_attempts": "INTEGER NOT NULL DEFAULT 0",
+                "next_cleanup_attempt_at": "TEXT",
             }
             for name, sql_type in job_additions.items():
                 if name not in job_columns:
@@ -254,6 +268,37 @@ class StateStore:
                    WHERE id=?""",
                 (status, external_id, process_state, progress, processed_file_path, processed_files_json,
                  process_error, utc_now(), attempts, next_attempt_at, job_id),
+            )
+
+    def cleanup_job_due(self, now: str) -> sqlite3.Row | None:
+        with self._connect() as db:
+            return db.execute(
+                """SELECT * FROM processing_jobs
+                   WHERE status='COMPLETED' AND COALESCE(cleanup_state, '') != 'CLEANED'
+                     AND (next_cleanup_attempt_at IS NULL OR next_cleanup_attempt_at <= ?)
+                   ORDER BY id LIMIT 1""",
+                (now,),
+            ).fetchone()
+
+    def update_cleanup_job(
+        self,
+        job_id: int,
+        *,
+        state: str,
+        error: str | None = None,
+        cleanup_at: str | None = None,
+        source_deleted: bool = False,
+        bytes_freed: int | None = None,
+        attempts: int = 0,
+        next_attempt_at: str | None = None,
+    ) -> None:
+        with self._connect() as db:
+            db.execute(
+                """UPDATE processing_jobs SET cleanup_state=?, cleanup_error=?, cleanup_at=?,
+                   source_deleted=?, cleanup_bytes_freed=COALESCE(?, cleanup_bytes_freed),
+                   cleanup_attempts=?, next_cleanup_attempt_at=?, updated_at=? WHERE id=?""",
+                (state, error, cleanup_at, int(source_deleted), bytes_freed, attempts,
+                 next_attempt_at, utc_now(), job_id),
             )
 
     def get_poll_state(self, channel_id: str) -> sqlite3.Row | None:

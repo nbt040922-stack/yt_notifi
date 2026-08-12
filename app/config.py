@@ -29,6 +29,7 @@ class Settings:
     ytdownload_bridge_url: str = "http://127.0.0.1:8790"
     processing_work_root: Path | None = None
     silence_cutter_bridge_url: str = "http://127.0.0.1:8791"
+    contentops_cleanup_dry_run: bool = True
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -49,6 +50,9 @@ class Settings:
             ytdownload_bridge_url=os.getenv("YTDOWNLOAD_BRIDGE_URL", "http://127.0.0.1:8790").rstrip("/"),
             processing_work_root=Path(processing_work_root) if processing_work_root else None,
             silence_cutter_bridge_url=os.getenv("SILENCE_CUTTER_BRIDGE_URL", "http://127.0.0.1:8791").rstrip("/"),
+            contentops_cleanup_dry_run=os.getenv(
+                "CONTENTOPS_CLEANUP_DRY_RUN", "true"
+            ).strip().lower() not in {"false", "0", "no"},
         )
 
 
