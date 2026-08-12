@@ -43,6 +43,10 @@
     dialog h3 { margin-top: 0; }
     label { display: block; color: #aeb8c7; font-size: 13px; margin: 16px 0 6px; }
     input { width: 100%; border: 1px solid #344057; border-radius: 8px; background: #0b0f17; color: #fff; padding: 11px; }
+    input[readonly] { color: #9eabbd; background: #121824; }
+    button:disabled { cursor: not-allowed; opacity: .45; }
+    .resolve-status { min-height: 18px; margin-top: 7px; color: #9eabbd; font-size: 12px; }
+    .resolve-status.success { color: #42d392; }
     .form-error { min-height: 20px; margin: 12px 0; color: #ff9ca6; font-size: 13px; }
     .notice { position: fixed; right: 20px; bottom: 20px; background: #183a2d; border: 1px solid #34775d; border-radius: 9px; padding: 11px 15px; display: none; }
     @media (max-width: 700px) { main { margin-top: 24px; } .summary, .details { grid-template-columns: repeat(2, 1fr); } .row { align-items: flex-start; flex-direction: column; } }
@@ -64,12 +68,15 @@
 <dialog id="add-dialog">
   <form id="add-form">
     <h3>Thêm kênh YouTube</h3>
-    <label for="channel-value">Channel ID hoặc URL /channel/</label>
-    <input id="channel-value" required placeholder="UC... hoặc https://youtube.com/channel/UC...">
-    <label for="channel-name">Tên hiển thị (không bắt buộc)</label>
-    <input id="channel-name" placeholder="Tên kênh">
+    <label for="channel-name">Channel Name</label>
+    <input id="channel-name" required placeholder="Tên nội bộ của kênh">
+    <label for="channel-url">YouTube Channel URL</label>
+    <input id="channel-url" required placeholder="https://www.youtube.com/@handle">
+    <div class="resolve-status" id="resolve-status"></div>
+    <label for="channel-id">Channel ID</label>
+    <input id="channel-id" readonly placeholder="Tự động nhận diện">
     <div class="form-error" id="form-error"></div>
-    <div class="actions"><button type="button" id="cancel-add">Hủy</button><button class="primary" type="submit">Thêm kênh</button></div>
+    <div class="actions"><button type="button" id="cancel-add">Hủy</button><button class="primary" id="submit-add" type="submit" disabled>Thêm kênh</button></div>
   </form>
 </dialog>
 <div class="notice" id="notice"></div>
@@ -77,6 +84,14 @@
 <script>
   const list = document.querySelector('#channels');
   const dialog = document.querySelector('#add-dialog');
+  const nameInput = document.querySelector('#channel-name');
+  const urlInput = document.querySelector('#channel-url');
+  const idInput = document.querySelector('#channel-id');
+  const resolveStatus = document.querySelector('#resolve-status');
+  const submitAdd = document.querySelector('#submit-add');
+  let resolvedId = '';
+  let resolveTimer;
+  let resolveSequence = 0;
   const formatTime = value => value ? new Date(value).toLocaleTimeString('vi-VN') : '—';
   const escapeText = value => String(value ?? '—');
 
@@ -134,14 +149,40 @@
   }
 
   function showNotice(message) { const notice = document.querySelector('#notice'); notice.textContent = message; notice.style.display = 'block'; setTimeout(() => notice.style.display = 'none', 2200); }
-  document.querySelector('#open-add').onclick = () => dialog.showModal();
-  document.querySelector('#cancel-add').onclick = () => dialog.close();
+  function updateAddButton() { submitAdd.disabled = !(nameInput.value.trim() && resolvedId); }
+  function resetResolver() { resolvedId = ''; idInput.value = ''; resolveStatus.textContent = ''; resolveStatus.className = 'resolve-status'; updateAddButton(); }
+  async function resolveUrl(sequence) {
+    idInput.value = 'Resolving...';
+    resolveStatus.textContent = 'Đang nhận diện kênh...';
+    try {
+      const result = await request('/api/channels/resolve', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({url:urlInput.value.trim()})});
+      if (sequence !== resolveSequence) return;
+      resolvedId = result.channel_id; idInput.value = resolvedId;
+      resolveStatus.textContent = result.title ? `Detected: ${result.title}` : 'Đã nhận diện kênh.';
+      resolveStatus.className = 'resolve-status success';
+    } catch (failure) {
+      if (sequence !== resolveSequence) return;
+      resolvedId = ''; idInput.value = '';
+      resolveStatus.textContent = failure.message || 'Could not resolve YouTube channel ID.';
+      resolveStatus.className = 'resolve-status';
+    }
+    updateAddButton();
+  }
+  nameInput.oninput = updateAddButton;
+  urlInput.oninput = () => {
+    clearTimeout(resolveTimer); resolveSequence += 1; resetResolver();
+    if (!urlInput.value.trim()) return;
+    const sequence = resolveSequence;
+    resolveTimer = setTimeout(() => resolveUrl(sequence), 500);
+  };
+  document.querySelector('#open-add').onclick = () => { document.querySelector('#add-form').reset(); resetResolver(); dialog.showModal(); };
+  document.querySelector('#cancel-add').onclick = () => { clearTimeout(resolveTimer); resolveSequence += 1; dialog.close(); };
   document.querySelector('#add-form').onsubmit = async event => {
     event.preventDefault();
     const error = document.querySelector('#form-error'); error.textContent = '';
     try {
-      await request('/api/channels', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({channel_id:document.querySelector('#channel-value').value, name:document.querySelector('#channel-name').value || null})});
-      event.target.reset(); dialog.close(); showNotice('Đã thêm kênh.'); await refresh();
+      await request('/api/channels', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({channel_id:resolvedId, name:nameInput.value.trim()})});
+      event.target.reset(); resetResolver(); dialog.close(); showNotice('Đã thêm kênh.'); await refresh();
     } catch (failure) { error.textContent = failure.message; }
   };
   refresh(); setInterval(refresh, 10000);

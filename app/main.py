@@ -11,6 +11,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from .channel_store import ChannelStore, ChannelStoreError
+from .channel_resolver import ChannelResolveError, ResolvedChannel, resolve_channel
 from .config import Settings
 from .detector import resume_notifications
 from .poller import ChannelPoller
@@ -25,7 +26,7 @@ class ChannelCreate(BaseModel):
 
     channel_id: str | None = Field(default=None, max_length=500)
     url: str | None = Field(default=None, max_length=500)
-    name: str | None = Field(default=None, max_length=200)
+    name: str = Field(min_length=1, max_length=200)
     enabled: bool = True
 
 
@@ -33,6 +34,12 @@ class ChannelUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     enabled: bool
+
+
+class ChannelResolve(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    url: str = Field(min_length=1, max_length=500)
 
 
 def configure_logging() -> None:
@@ -53,11 +60,13 @@ def create_app(
     state: StateStore | None = None,
     notifier: TelegramNotifier | None = None,
     channel_store: ChannelStore | None = None,
+    channel_resolver=None,
 ) -> FastAPI:
     settings = settings or Settings.from_env()
     state = state or StateStore(settings.state_db)
     notifier = notifier or TelegramNotifier(settings.telegram_bot_token, settings.telegram_chat_id)
     channel_store = channel_store or ChannelStore(settings.channels_file)
+    channel_resolver = channel_resolver or resolve_channel
     try:
         channels = channel_store.enabled()
     except ChannelStoreError:
@@ -155,6 +164,28 @@ def create_app(
     @app.get("/api/channels")
     def api_channels() -> list[dict]:
         return [channel_payload(channel) for channel in channel_store.list()]
+
+    @app.post("/api/channels/resolve")
+    async def resolve_channel_url(payload: ChannelResolve) -> dict:
+        try:
+            resolved: ResolvedChannel = await asyncio.to_thread(channel_resolver, settings, payload.url)
+        except ChannelResolveError as exc:
+            logging.getLogger("yt_notifi").info("CHANNEL_RESOLVE_FAILED error_type=%s", type(exc).__name__)
+            return JSONResponse(
+                {"ok": False, "error": "CHANNEL_RESOLVE_FAILED", "message": str(exc)},
+                status_code=400,
+            )
+        if any(channel.channel_id == resolved.channel_id for channel in channel_store.list()):
+            return JSONResponse(
+                {"ok": False, "error": "CHANNEL_ALREADY_EXISTS", "message": "This YouTube channel is already being monitored."},
+                status_code=409,
+            )
+        return {
+            "ok": True,
+            "channel_id": resolved.channel_id,
+            "canonical_url": resolved.canonical_url,
+            "title": resolved.title,
+        }
 
     @app.post("/api/channels", status_code=201)
     def add_channel(payload: ChannelCreate) -> dict:

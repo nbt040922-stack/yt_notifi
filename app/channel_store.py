@@ -90,11 +90,13 @@ class ChannelStore:
 
     def add(self, value: str, name: str | None = None, enabled: bool = True) -> Channel:
         channel_id = parse_channel_id(value)
+        display_name = (name or "").strip()
+        if not display_name:
+            raise ChannelStoreError("INVALID_CHANNEL_NAME", "Tên kênh không được để trống.")
         with self._lock:
             channels = self._load_unlocked()
             if any(channel.channel_id == channel_id for channel in channels):
                 raise ChannelStoreError("CHANNEL_ALREADY_EXISTS", "Kênh này đã có trong danh sách theo dõi.", 409)
-            display_name = (name or "").strip() or f"Channel {channel_id[:8]}..."
             channel = Channel(channel_id, display_name, enabled)
             self._save_unlocked([*channels, channel])
             return channel

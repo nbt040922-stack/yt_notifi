@@ -51,13 +51,10 @@ def test_get_channels_includes_runtime_state(settings):
     assert item["status"] == "Healthy"
 
 
-def test_add_raw_id_and_default_name(settings):
-    client, state = api(settings)
-    response = client.post("/api/channels", json={"channel_id": NEW_CHANNEL})
-    assert response.status_code == 201
-    assert response.json()["name"] == "Channel UCaaaaaa..."
-    assert response.json()["enabled"] is True
-    assert state.get_poll_state(NEW_CHANNEL)["initialized"] == 0
+def test_empty_display_name_rejected(settings):
+    client, _ = api(settings)
+    assert client.post("/api/channels", json={"channel_id": NEW_CHANNEL}).status_code == 400
+    assert client.post("/api/channels", json={"channel_id": NEW_CHANNEL, "name": "   "}).json()["error"] == "INVALID_CHANNEL_NAME"
 
 
 def test_add_channel_url(settings):
@@ -73,8 +70,8 @@ def test_add_channel_url(settings):
 
 def test_invalid_and_duplicate_channel_rejected(settings):
     client, _ = api(settings)
-    invalid = client.post("/api/channels", json={"channel_id": "bad"})
-    duplicate = client.post("/api/channels", json={"channel_id": CHANNEL_ID})
+    invalid = client.post("/api/channels", json={"channel_id": "bad", "name": "Bad"})
+    duplicate = client.post("/api/channels", json={"channel_id": CHANNEL_ID, "name": "Duplicate"})
     assert invalid.json()["error"] == "INVALID_CHANNEL_ID"
     assert duplicate.status_code == 409
     assert duplicate.json()["error"] == "CHANNEL_ALREADY_EXISTS"
@@ -115,7 +112,7 @@ def test_concurrent_mutations_do_not_lose_updates(settings):
     store = ChannelStore(settings.channels_file)
     ids = ["UC" + f"{index:022d}" for index in range(12)]
     with ThreadPoolExecutor(max_workers=6) as pool:
-        list(pool.map(store.add, ids))
+        list(pool.map(lambda channel_id: store.add(channel_id, "Same name"), ids))
     saved = store.list()
     assert {channel.channel_id for channel in saved} == {CHANNEL_ID, *ids}
 
@@ -125,7 +122,7 @@ def test_malformed_config_is_not_overwritten(settings):
     settings.channels_file.write_bytes(original)
     client, _ = api(settings)
     assert client.get("/api/channels").json()["error"] == "CONFIG_INVALID"
-    assert client.post("/api/channels", json={"channel_id": NEW_CHANNEL}).json()["error"] == "CONFIG_INVALID"
+    assert client.post("/api/channels", json={"channel_id": NEW_CHANNEL, "name": "New"}).json()["error"] == "CONFIG_INVALID"
     assert settings.channels_file.read_bytes() == original
 
 
