@@ -42,7 +42,13 @@
     dialog::backdrop { background: #000a; }
     dialog h3 { margin-top: 0; }
     label { display: block; color: #aeb8c7; font-size: 13px; margin: 16px 0 6px; }
-    input { width: 100%; border: 1px solid #344057; border-radius: 8px; background: #0b0f17; color: #fff; padding: 11px; }
+    input, textarea { width: 100%; border: 1px solid #344057; border-radius: 8px; background: #0b0f17; color: #fff; padding: 11px; }
+    textarea { min-height: 170px; resize: vertical; }
+    .tabs { display: flex; gap: 8px; margin: 28px 0 8px; }
+    .tabs button.active { background: #3b6df6; border-color: #3b6df6; }
+    .tab-pane[hidden] { display: none; }
+    .bulk { border: 1px solid #293142; border-radius: 12px; padding: 20px; background: #111620dd; }
+    .bulk-result { margin-top: 14px; color: #aeb8c7; white-space: pre-wrap; }
     input[readonly] { color: #9eabbd; background: #121824; }
     button:disabled { cursor: not-allowed; opacity: .45; }
     .resolve-status { min-height: 18px; margin-top: 7px; color: #9eabbd; font-size: 12px; }
@@ -66,10 +72,25 @@
     <div class="metric"><span>Telegram</span><strong id="telegram">—</strong></div>
     <div class="metric"><span>Kênh đang bật</span><strong id="enabled">—</strong></div>
   </section>
-  <div class="toolbar"><h2>KÊNH THEO DÕI</h2><button class="primary" id="open-add">+ Thêm kênh</button></div>
-  <div id="channels"></div>
-  <h2>JOBS</h2>
-  <div id="jobs"></div>
+  <nav class="tabs"><button class="active" data-tab="silence">Silence Channels</button><button data-tab="notify">Notify Channels</button></nav>
+  <section class="tab-pane" id="silence-tab">
+    <div class="toolbar"><h2>KÊNH THEO DÕI</h2><button class="primary" id="open-add">+ Thêm kênh</button></div>
+    <div id="channels"></div>
+    <h2>JOBS</h2>
+    <div id="jobs"></div>
+  </section>
+  <section class="tab-pane" id="notify-tab" hidden>
+    <h2>THÊM HÀNG LOẠT KÊNH CHỈ THÔNG BÁO</h2>
+    <form class="bulk" id="notify-form">
+      <label for="notify-input">Mỗi dòng một URL kênh YouTube</label>
+      <textarea id="notify-input" required placeholder="https://www.youtube.com/@channel1&#10;https://www.youtube.com/channel/UC..."></textarea>
+      <div class="form-error" id="notify-error"></div>
+      <button class="primary" id="notify-submit" type="submit">Thêm kênh</button>
+      <div class="bulk-result" id="notify-result"></div>
+    </form>
+    <h2>NOTIFY CHANNELS</h2>
+    <div id="notify-channels"></div>
+  </section>
 </main>
 
 <dialog id="add-dialog">
@@ -91,6 +112,7 @@
 <script>
   const list = document.querySelector('#channels');
   const jobsList = document.querySelector('#jobs');
+  const notifyList = document.querySelector('#notify-channels');
   const dialog = document.querySelector('#add-dialog');
   const nameInput = document.querySelector('#channel-name');
   const urlInput = document.querySelector('#channel-url');
@@ -143,6 +165,27 @@
     card.append(row, details); return card;
   }
 
+  function notifyChannelCard(channel) {
+    const card = document.createElement('article'); card.className = 'channel';
+    const row = document.createElement('div'); row.className = 'row';
+    const info = document.createElement('div');
+    const title = document.createElement('h3'); title.textContent = channel.name;
+    const id = document.createElement('div'); id.className = 'channel-id'; id.textContent = channel.channel_id;
+    const badge = document.createElement('div'); badge.className = `badge ${channel.enabled ? '' : 'disabled'}`;
+    const dot = document.createElement('span'); dot.className = 'dot';
+    const status = document.createElement('span'); status.textContent = channel.enabled ? 'Enabled' : 'Disabled';
+    badge.append(dot, status); info.append(title, id, badge);
+    const actions = document.createElement('div'); actions.className = 'actions';
+    const toggle = document.createElement('button'); toggle.textContent = channel.enabled ? 'Tắt' : 'Bật';
+    toggle.onclick = async () => { await request(`/api/notify-channels/${channel.channel_id}`, {method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({enabled:!channel.enabled})}); await refresh(); };
+    const remove = document.createElement('button'); remove.className = 'danger'; remove.textContent = 'Xóa';
+    remove.onclick = async () => { if (confirm('Xóa kênh khỏi danh sách chỉ thông báo?')) { await request(`/api/notify-channels/${channel.channel_id}`, {method:'DELETE'}); await refresh(); } };
+    actions.append(toggle, remove); row.append(info, actions);
+    const details = document.createElement('div'); details.className = 'details';
+    details.append(detail('Đã thêm', formatTime(channel.created_at)), detail('Poll gần nhất', formatTime(channel.last_poll_at)), detail('Video gần nhất', channel.latest_seen_video_id), detail('Số lỗi', channel.failures));
+    card.append(row, details); return card;
+  }
+
   function jobCard(job) {
     const row = document.createElement('div'); row.className = 'job';
     const channel = document.createElement('strong'); channel.textContent = job.channel_name;
@@ -161,12 +204,13 @@
 
   async function refresh() {
     try {
-      const [status, channels, jobs] = await Promise.all([request('/api/status'), request('/api/channels'), request('/api/jobs')]);
+      const [status, channels, notifyChannels, jobs] = await Promise.all([request('/api/status'), request('/api/channels'), request('/api/notify-channels'), request('/api/jobs')]);
       document.querySelector('#interval').textContent = `${status.poll_interval_seconds}s`;
       document.querySelector('#ytdlp').textContent = status.ytdlp;
       document.querySelector('#telegram').textContent = status.telegram;
       document.querySelector('#enabled').textContent = status.enabled_channels;
       list.replaceChildren(...(channels.length ? channels.map(channelCard) : [Object.assign(document.createElement('div'), {className:'empty', textContent:'Chưa có kênh nào.'})]));
+      notifyList.replaceChildren(...(notifyChannels.length ? notifyChannels.map(notifyChannelCard) : [Object.assign(document.createElement('div'), {className:'empty', textContent:'Chưa có kênh chỉ thông báo.'})]));
       jobsList.replaceChildren(...(jobs.length ? jobs.map(jobCard) : [Object.assign(document.createElement('div'), {className:'empty', textContent:'Chưa có job nào.'})]));
     } catch (error) {
       list.replaceChildren(Object.assign(document.createElement('div'), {className:'error', textContent:error.message}));
@@ -209,6 +253,35 @@
       await request('/api/channels', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({channel_id:resolvedId, name:nameInput.value.trim()})});
       event.target.reset(); resetResolver(); dialog.close(); showNotice('Đã thêm kênh.'); await refresh();
     } catch (failure) { error.textContent = failure.message; }
+  };
+  document.querySelectorAll('[data-tab]').forEach(button => button.onclick = () => {
+    document.querySelectorAll('[data-tab]').forEach(item => item.classList.toggle('active', item === button));
+    document.querySelector('#silence-tab').hidden = button.dataset.tab !== 'silence';
+    document.querySelector('#notify-tab').hidden = button.dataset.tab !== 'notify';
+  });
+  document.querySelector('#notify-form').onsubmit = async event => {
+    event.preventDefault();
+    const input = document.querySelector('#notify-input');
+    const submit = document.querySelector('#notify-submit');
+    const error = document.querySelector('#notify-error');
+    const output = document.querySelector('#notify-result');
+    const channels = input.value.split(/\r?\n/).map(value => value.trim()).filter(Boolean);
+    if (!channels.length) { error.textContent = 'Hãy nhập ít nhất một URL kênh.'; return; }
+    error.textContent = ''; output.textContent = ''; submit.disabled = true;
+    submit.textContent = `Đang nhận diện 0 / ${channels.length}...`;
+    try {
+      const result = {total:0, added:0, existing:0, failed:0, results:[]};
+      for (let offset = 0; offset < channels.length; offset += 20) {
+        const batch = await request('/api/notify-channels/bulk', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({channels:channels.slice(offset, offset + 20)})});
+        for (const key of ['total', 'added', 'existing', 'failed']) result[key] += batch[key];
+        result.results.push(...batch.results);
+        submit.textContent = `Đang nhận diện ${Math.min(offset + 20, channels.length)} / ${channels.length}...`;
+      }
+      output.textContent = `Đã xử lý: ${result.total}\nĐã thêm: ${result.added}\nĐã tồn tại: ${result.existing}\nThất bại: ${result.failed}\n\n` + result.results.map(item => `${item.input} → ${item.status}${item.error ? `: ${item.error}` : ''}`).join('\n');
+      if (result.failed === 0) input.value = '';
+      await refresh();
+    } catch (failure) { error.textContent = failure.message; }
+    finally { submit.disabled = false; submit.textContent = 'Thêm kênh'; }
   };
   refresh(); setInterval(refresh, 10000);
 </script>

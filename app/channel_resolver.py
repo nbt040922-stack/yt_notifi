@@ -41,13 +41,14 @@ def _validated_url(value: str) -> tuple[str, str | None]:
     return url, direct.group(1) if direct else None
 
 
-def resolve_channel(settings: Settings, value: str) -> ResolvedChannel:
+def resolve_channel(settings: Settings, value: str, *, resolve_title: bool = False) -> ResolvedChannel:
     url, direct_id = _validated_url(value)
-    if direct_id:
+    if direct_id and not resolve_title:
         return ResolvedChannel(direct_id, f"https://www.youtube.com/channel/{direct_id}")
-
     executable = find_ytdlp(settings)
     if not executable:
+        if direct_id:
+            return ResolvedChannel(direct_id, f"https://www.youtube.com/channel/{direct_id}")
         raise ChannelResolveError("Could not resolve YouTube channel ID.")
 
     try:
@@ -75,7 +76,7 @@ def resolve_channel(settings: Settings, value: str) -> ResolvedChannel:
 
     channel_id = next(
         (str(data.get(key)) for key in ("channel_id", "uploader_id") if CHANNEL_ID_RE.fullmatch(str(data.get(key, "")))),
-        None,
+        direct_id,
     )
     if not channel_id:
         raise ChannelResolveError("Could not resolve YouTube channel ID.")

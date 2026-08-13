@@ -45,6 +45,7 @@ def handle_detected_video(
     *,
     baseline: bool = False,
     nas_output_root: Path | None = None,
+    create_job: bool = True,
 ) -> str:
     if not state.record_event(event, baseline=baseline):
         logger.debug("POLL_DUPLICATE video_id=%s", event.video_id)
@@ -52,10 +53,11 @@ def handle_detected_video(
     if baseline:
         return "BASELINE"
     channel_name = channel_names.get(event.channel_id, event.channel_id)
-    try:
-        create_processing_job(state, event, channel_name, nas_output_root)
-    except Exception as exc:
-        logger.error("JOB_CREATE_FAILED video_id=%s error_type=%s", event.video_id, type(exc).__name__)
+    if create_job:
+        try:
+            create_processing_job(state, event, channel_name, nas_output_root)
+        except Exception as exc:
+            logger.error("JOB_CREATE_FAILED video_id=%s error_type=%s", event.video_id, type(exc).__name__)
     deliver_notification(event, state, notifier, channel_name)
     return "NEW"
 

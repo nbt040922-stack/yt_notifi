@@ -71,6 +71,16 @@ class StateStore:
                 )"""
             )
             db.execute(
+                """CREATE TABLE IF NOT EXISTS notify_channels (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    channel_id TEXT NOT NULL UNIQUE,
+                    name TEXT NOT NULL,
+                    source_url TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    enabled INTEGER NOT NULL DEFAULT 1
+                )"""
+            )
+            db.execute(
                 """CREATE TABLE IF NOT EXISTS processing_jobs (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     created_at TEXT NOT NULL,
@@ -199,6 +209,38 @@ class StateStore:
     def processing_jobs(self) -> list[sqlite3.Row]:
         with self._connect() as db:
             return list(db.execute("SELECT * FROM processing_jobs ORDER BY id DESC"))
+
+    def notify_channels(self, *, enabled_only: bool = False) -> list[sqlite3.Row]:
+        query = "SELECT * FROM notify_channels"
+        if enabled_only:
+            query += " WHERE enabled=1"
+        with self._connect() as db:
+            return list(db.execute(query + " ORDER BY id"))
+
+    def add_notify_channel(self, channel_id: str, name: str, source_url: str) -> tuple[sqlite3.Row, bool]:
+        with self._connect() as db:
+            cursor = db.execute(
+                """INSERT OR IGNORE INTO notify_channels
+                   (channel_id, name, source_url, created_at, enabled)
+                   VALUES (?, ?, ?, ?, 1)""",
+                (channel_id, name, source_url, utc_now()),
+            )
+            row = db.execute("SELECT * FROM notify_channels WHERE channel_id=?", (channel_id,)).fetchone()
+            return row, cursor.rowcount == 1
+
+    def update_notify_channel(self, channel_id: str, enabled: bool) -> sqlite3.Row | None:
+        with self._connect() as db:
+            cursor = db.execute(
+                "UPDATE notify_channels SET enabled=? WHERE channel_id=?",
+                (int(enabled), channel_id),
+            )
+            if not cursor.rowcount:
+                return None
+            return db.execute("SELECT * FROM notify_channels WHERE channel_id=?", (channel_id,)).fetchone()
+
+    def delete_notify_channel(self, channel_id: str) -> bool:
+        with self._connect() as db:
+            return db.execute("DELETE FROM notify_channels WHERE channel_id=?", (channel_id,)).rowcount == 1
 
     def download_jobs_due(self, now: str) -> list[sqlite3.Row]:
         with self._connect() as db:

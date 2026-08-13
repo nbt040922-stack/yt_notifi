@@ -45,6 +45,22 @@ def test_handle_resolves_with_mocked_ytdlp(settings, tmp_path, monkeypatch):
     )
 
 
+def test_direct_channel_can_resolve_official_title(settings, tmp_path, monkeypatch):
+    executable = tmp_path / "yt-dlp.exe"
+    executable.touch()
+    settings = replace(settings, ytdlp_path=str(executable))
+    monkeypatch.setattr(
+        "app.channel_resolver.subprocess.run",
+        lambda command, **kwargs: subprocess.CompletedProcess(
+            command, 0, stdout=json.dumps({"channel_id": CHANNEL_ID, "channel": "Official"}), stderr=""
+        ),
+    )
+    result = resolve_channel(
+        settings, f"https://www.youtube.com/channel/{CHANNEL_ID}", resolve_title=True
+    )
+    assert result.title == "Official"
+
+
 @pytest.mark.parametrize("path", ["@example", "c/example", "user/example"])
 def test_supported_alias_urls_use_ytdlp(settings, tmp_path, monkeypatch, path):
     executable = tmp_path / "yt-dlp.exe"

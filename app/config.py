@@ -25,6 +25,7 @@ class Settings:
     ytdlp_path: str = ""
     poll_interval_seconds: int = 10
     poll_max_concurrency: int = 3
+    notify_resolve_concurrency: int = 6
     nas_output_root: Path | None = None
     ytdownload_bridge_url: str = "http://127.0.0.1:8790"
     processing_work_root: Path | None = None
@@ -46,6 +47,7 @@ class Settings:
             ytdlp_path=os.getenv("YTDLP_PATH", ""),
             poll_interval_seconds=max(1, int(os.getenv("POLL_INTERVAL_SECONDS", "10"))),
             poll_max_concurrency=max(1, int(os.getenv("POLL_MAX_CONCURRENCY", "3"))),
+            notify_resolve_concurrency=max(1, min(12, int(os.getenv("NOTIFY_RESOLVE_CONCURRENCY", "6")))),
             nas_output_root=Path(nas_output_root) if nas_output_root else None,
             ytdownload_bridge_url=os.getenv("YTDOWNLOAD_BRIDGE_URL", "http://127.0.0.1:8790").rstrip("/"),
             processing_work_root=Path(processing_work_root) if processing_work_root else None,

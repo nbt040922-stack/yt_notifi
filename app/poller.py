@@ -72,11 +72,13 @@ class ChannelPoller:
         channels: list[Channel] | None = None,
         runner=subprocess.run,
         channel_loader: Callable[[], list[Channel]] | None = None,
+        processing_channel_loader: Callable[[], set[str]] | None = None,
     ):
         self.settings = settings
         self.state = state
         self.notifier = notifier
         self.channel_loader = channel_loader or (lambda: enabled_channels(settings.channels_file) if channels is None else channels)
+        self.processing_channel_loader = processing_channel_loader
         self.channels: list[Channel] = []
         self.names: dict[str, str] = {}
         self.refresh_channels()
@@ -87,11 +89,16 @@ class ChannelPoller:
     def refresh_channels(self) -> None:
         try:
             channels = self.channel_loader()
+            processing_ids = (
+                self.processing_channel_loader() if self.processing_channel_loader
+                else {channel.channel_id for channel in channels}
+            )
         except Exception as exc:
             logger.error("CHANNEL_CONFIG_FAILED error_type=%s", type(exc).__name__)
             return
         self.channels = channels
         self.names = {channel.channel_id: channel.name for channel in channels}
+        self.processing_ids = processing_ids
 
     def poll_channel(self, channel: Channel) -> list[tuple[VideoEvent, str]]:
         logger.debug("POLL_START channel_id=%s", channel.channel_id)
@@ -103,6 +110,7 @@ class ChannelPoller:
             classification = handle_detected_video(
                 event, self.state, self.notifier, self.names,
                 baseline=baseline, nas_output_root=self.settings.nas_output_root,
+                create_job=channel.channel_id in self.processing_ids,
             )
             results.append((event, classification))
             if classification == "NEW":

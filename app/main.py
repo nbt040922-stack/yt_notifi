@@ -13,7 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from .channel_store import ChannelStore, ChannelStoreError
 from .channel_resolver import ChannelResolveError, ResolvedChannel, resolve_channel
 from .cleanup_worker import CleanupWorker
-from .config import Settings
+from .config import Channel, Settings
 from .detector import resume_notifications
 from .download_worker import DownloadHandoffWorker
 from .poller import ChannelPoller
@@ -45,6 +45,12 @@ class ChannelResolve(BaseModel):
     url: str = Field(min_length=1, max_length=500)
 
 
+class NotifyBulkCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    channels: list[str] = Field(min_length=1, max_length=500)
+
+
 def configure_logging() -> None:
     log_dir = Path(__file__).resolve().parent.parent / "logs"
     log_dir.mkdir(exist_ok=True)
@@ -70,11 +76,34 @@ def create_app(
     notifier = notifier or TelegramNotifier(settings.telegram_bot_token, settings.telegram_chat_id)
     channel_store = channel_store or ChannelStore(settings.channels_file)
     channel_resolver = channel_resolver or resolve_channel
-    try:
-        channels = channel_store.enabled()
-    except ChannelStoreError:
-        channels = []
-    poller = ChannelPoller(settings, state, notifier, channels, channel_loader=channel_store.enabled)
+    def silence_channels():
+        return channel_store.enabled()
+
+    def notify_channels():
+        return [
+            Channel(row["channel_id"], row["name"])
+            for row in state.notify_channels(enabled_only=True)
+        ]
+
+    def monitored_channels():
+        merged = {channel.channel_id: channel for channel in notify_channels()}
+        try:
+            merged.update({channel.channel_id: channel for channel in silence_channels()})
+        except ChannelStoreError:
+            pass
+        return list(merged.values())
+
+    def processing_channel_ids():
+        try:
+            return {channel.channel_id for channel in silence_channels()}
+        except ChannelStoreError:
+            return set()
+
+    channels = monitored_channels()
+    poller = ChannelPoller(
+        settings, state, notifier, channels, channel_loader=monitored_channels,
+        processing_channel_loader=processing_channel_ids,
+    )
     download_worker = DownloadHandoffWorker(settings, state)
     process_worker = ProcessHandoffWorker(settings, state)
     cleanup_worker = CleanupWorker(settings, state)
@@ -143,6 +172,11 @@ def create_app(
             "status": status,
         }
 
+    def notify_channel_payload(row) -> dict:
+        payload = channel_payload(Channel(row["channel_id"], row["name"], bool(row["enabled"])))
+        payload.update({"id": row["id"], "source_url": row["source_url"], "created_at": row["created_at"]})
+        return payload
+
     @app.get("/", response_class=HTMLResponse)
     def dashboard() -> str:
         return DASHBOARD.read_text(encoding="utf-8")
@@ -169,6 +203,7 @@ def create_app(
             "ytdlp": "READY" if poller.executable else "MISSING",
             "telegram": "CONFIGURED" if settings.telegram_bot_token and settings.telegram_chat_id else "NOT CONFIGURED",
             "enabled_channels": enabled_count,
+            "enabled_notify_channels": len(state.notify_channels(enabled_only=True)),
             "last_new_video": state.latest_activity()["last_new_video"],
             "config_error": config_error,
         }
@@ -180,6 +215,95 @@ def create_app(
     @app.get("/api/jobs")
     def api_jobs() -> list[dict]:
         return [dict(job) for job in state.processing_jobs()]
+
+    @app.get("/api/notify-channels")
+    def api_notify_channels() -> list[dict]:
+        return [notify_channel_payload(row) for row in state.notify_channels()]
+
+    @app.post("/api/notify-channels/bulk")
+    async def add_notify_channels(payload: NotifyBulkCreate) -> dict:
+        semaphore = asyncio.Semaphore(settings.notify_resolve_concurrency)
+        unique_inputs = list(dict.fromkeys(
+            value.strip() for value in payload.channels if value.strip() and len(value.strip()) <= 500
+        ))
+
+        async def resolve(value: str):
+            async with semaphore:
+                try:
+                    if channel_resolver is resolve_channel:
+                        return await asyncio.to_thread(channel_resolver, settings, value, resolve_title=True), None
+                    return await asyncio.to_thread(channel_resolver, settings, value), None
+                except ChannelResolveError as exc:
+                    logging.getLogger("yt_notifi").info(
+                        "NOTIFY_CHANNEL_RESOLVE_FAILED error_type=%s", type(exc).__name__
+                    )
+                    return None, str(exc)
+                except Exception as exc:
+                    logging.getLogger("yt_notifi").info(
+                        "NOTIFY_CHANNEL_RESOLVE_FAILED error_type=%s", type(exc).__name__
+                    )
+                    return None, "Could not resolve YouTube channel ID."
+
+        resolved = dict(zip(unique_inputs, await asyncio.gather(*(resolve(value) for value in unique_inputs))))
+        results, seen_inputs, seen_channels = [], set(), set()
+        silence_ids = processing_channel_ids()
+        for original in payload.channels:
+            value = original.strip()
+            if not value:
+                results.append({
+                    "input": original, "status": "FAILED", "channel_id": None,
+                    "name": None, "error": "Empty channel reference.",
+                })
+                continue
+            if len(value) > 500:
+                results.append({
+                    "input": original, "status": "FAILED", "channel_id": None,
+                    "name": None, "error": "Channel reference is too long.",
+                })
+                continue
+            item, error = resolved[value]
+            if error:
+                results.append({
+                    "input": original, "status": "FAILED", "channel_id": None,
+                    "name": None, "error": error,
+                })
+                continue
+            name = item.title or item.channel_id
+            row, added = state.add_notify_channel(item.channel_id, name, item.canonical_url)
+            duplicate = value in seen_inputs or item.channel_id in seen_channels
+            status = "ADDED" if added and not duplicate else "ALREADY_EXISTS"
+            if added and item.channel_id not in silence_ids:
+                state.reset_poll_baseline(item.channel_id)
+            results.append({
+                "input": original, "status": status, "channel_id": item.channel_id,
+                "name": row["name"], "error": None,
+            })
+            seen_inputs.add(value)
+            seen_channels.add(item.channel_id)
+        return {
+            "total": len(results),
+            "added": sum(item["status"] == "ADDED" for item in results),
+            "existing": sum(item["status"] == "ALREADY_EXISTS" for item in results),
+            "failed": sum(item["status"] == "FAILED" for item in results),
+            "results": results,
+        }
+
+    @app.patch("/api/notify-channels/{channel_id}")
+    def update_notify_channel(channel_id: str, payload: ChannelUpdate) -> dict:
+        before = next((row for row in state.notify_channels() if row["channel_id"] == channel_id), None)
+        row = state.update_notify_channel(channel_id, payload.enabled)
+        if not row:
+            return JSONResponse({"error": "CHANNEL_NOT_FOUND", "message": "Channel not found."}, status_code=404)
+        silence_ids = processing_channel_ids()
+        if payload.enabled and before and not before["enabled"] and channel_id not in silence_ids:
+            state.reset_poll_baseline(channel_id)
+        return notify_channel_payload(row)
+
+    @app.delete("/api/notify-channels/{channel_id}")
+    def delete_notify_channel(channel_id: str) -> dict[str, str]:
+        if not state.delete_notify_channel(channel_id):
+            return JSONResponse({"error": "CHANNEL_NOT_FOUND", "message": "Channel not found."}, status_code=404)
+        return {"status": "removed"}
 
     @app.post("/api/channels/resolve")
     async def resolve_channel_url(payload: ChannelResolve) -> dict:
