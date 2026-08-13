@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parent.parent
 CHANNEL_ID_RE = re.compile(r"^UC[A-Za-z0-9_-]{22}$")
+TEAM_MEMBER_IDS = ("member_1", "member_2", "member_3", "member_4")
 
 
 @dataclass(frozen=True)
@@ -75,21 +76,70 @@ class TeamMember:
     nas_folder: str
 
 
-def load_team_members(path: Path = ROOT / "config" / "team_members.json") -> list[TeamMember]:
-    data = json.loads(path.read_text(encoding="utf-8"))
+def _validate_team_members(data: object) -> list[TeamMember]:
     if not isinstance(data, list) or len(data) != 4:
         raise ValueError("team_members.json must contain exactly 4 members")
     members = [
-        TeamMember(str(item.get("id") or ""), str(item.get("display_name") or ""), str(item.get("nas_folder") or ""))
+        TeamMember(
+            str(item.get("id") or ""),
+            str(item.get("display_name") or "").strip(),
+            str(item.get("nas_folder") or "").strip(),
+        )
         for item in data
     ]
-    if any(not member.id or not member.display_name or not member.nas_folder for member in members):
-        raise ValueError("Team member fields must not be empty")
     if len({member.id for member in members}) != 4:
         raise ValueError("Team member IDs must be unique")
-    if any(Path(member.nas_folder).name != member.nas_folder or member.nas_folder in {".", ".."} for member in members):
+    if tuple(member.id for member in members) != TEAM_MEMBER_IDS:
+        raise ValueError("Team member IDs must remain member_1 through member_4")
+    if any(not member.display_name or len(member.display_name) > 50 for member in members):
+        raise ValueError("Team member display name must contain 1 to 50 characters")
+    if any(
+        not member.nas_folder
+        or len(member.nas_folder) > 80
+        or member.nas_folder in {".", ".."}
+        or any(character in member.nas_folder for character in '\\/:')
+        for member in members
+    ):
         raise ValueError("Invalid team member NAS folder")
     return members
+
+
+def load_team_members(path: Path = ROOT / "config" / "team_members.json") -> list[TeamMember]:
+    return _validate_team_members(json.loads(path.read_text(encoding="utf-8")))
+
+
+def update_team_member(
+    path: Path,
+    member_id: str,
+    display_name: str | None = None,
+    nas_folder: str | None = None,
+) -> list[TeamMember]:
+    members = load_team_members(path)
+    if member_id not in TEAM_MEMBER_IDS:
+        raise KeyError(member_id)
+    updated = [
+        TeamMember(
+            member.id,
+            display_name.strip() if member.id == member_id and display_name is not None else member.display_name,
+            nas_folder.strip() if member.id == member_id and nas_folder is not None else member.nas_folder,
+        )
+        for member in members
+    ]
+    payload = [member.__dict__ for member in updated]
+    _validate_team_members(payload)
+    temporary = path.with_name(path.name + ".tmp")
+    try:
+        with temporary.open("w", encoding="utf-8", newline="\n") as file:
+            json.dump(payload, file, ensure_ascii=False, indent=2)
+            file.write("\n")
+            file.flush()
+            os.fsync(file.fileno())
+        load_team_members(temporary)
+        os.replace(temporary, path)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+    return updated
 
 
 def load_channels(path: Path, owner_ids: set[str] | None = None, default_owner: str = "member_1") -> list[Channel]:

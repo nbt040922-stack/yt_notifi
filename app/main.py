@@ -13,7 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from .channel_store import ChannelStore, ChannelStoreError
 from .channel_resolver import ChannelResolveError, ResolvedChannel, resolve_channel
 from .cleanup_worker import CleanupWorker
-from .config import Channel, Settings, load_team_members
+from .config import Channel, Settings, load_team_members, update_team_member
 from .detector import resume_notifications
 from .download_worker import DownloadHandoffWorker
 from .poller import ChannelPoller
@@ -39,6 +39,13 @@ class ChannelUpdate(BaseModel):
 
     enabled: bool | None = None
     owner_id: str | None = None
+
+
+class TeamMemberUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    display_name: str | None = Field(default=None, max_length=50)
+    nas_folder: str | None = Field(default=None, max_length=80)
 
 
 class ChannelResolve(BaseModel):
@@ -219,6 +226,26 @@ def create_app(
     @app.get("/api/team-members")
     def api_team_members() -> list[dict]:
         return [member.__dict__ for member in team_members]
+
+    @app.patch("/api/team-members/{member_id}")
+    def update_member(member_id: str, payload: TeamMemberUpdate) -> dict:
+        if payload.display_name is None and payload.nas_folder is None:
+            raise ChannelStoreError("INVALID_REQUEST", "Không có thay đổi.")
+        try:
+            updated = update_team_member(
+                settings.team_members_file, member_id, payload.display_name, payload.nas_folder,
+            )
+        except KeyError:
+            raise ChannelStoreError("MEMBER_NOT_FOUND", "Không tìm thấy thành viên.", 404)
+        except ValueError as exc:
+            raise ChannelStoreError("INVALID_TEAM_MEMBER", str(exc))
+        except OSError as exc:
+            logging.getLogger("yt_notifi").error(
+                "TEAM_MEMBER_CONFIG_WRITE_FAILED error_type=%s", type(exc).__name__
+            )
+            raise ChannelStoreError("CONFIG_WRITE_FAILED", "Không thể lưu cấu hình thành viên.", 500)
+        team_members[:] = updated
+        return next(member.__dict__ for member in team_members if member.id == member_id)
 
     @app.get("/api/jobs")
     def api_jobs() -> list[dict]:
