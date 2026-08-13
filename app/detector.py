@@ -6,6 +6,7 @@ import time
 from pathlib import Path
 
 from .jobs import create_processing_job
+from .config import TeamMember
 from .models import VideoEvent
 from .state import StateStore
 from .telegram import TelegramNotifier
@@ -46,6 +47,8 @@ def handle_detected_video(
     baseline: bool = False,
     nas_output_root: Path | None = None,
     create_job: bool = True,
+    owner_id: str | None = None,
+    team_members: list[TeamMember] | None = None,
 ) -> str:
     if not state.record_event(event, baseline=baseline):
         logger.debug("POLL_DUPLICATE video_id=%s", event.video_id)
@@ -55,7 +58,9 @@ def handle_detected_video(
     channel_name = channel_names.get(event.channel_id, event.channel_id)
     if create_job:
         try:
-            create_processing_job(state, event, channel_name, nas_output_root)
+            create_processing_job(
+                state, event, channel_name, owner_id or "", team_members or [], nas_output_root
+            )
         except Exception as exc:
             logger.error("JOB_CREATE_FAILED video_id=%s error_type=%s", event.video_id, type(exc).__name__)
     deliver_notification(event, state, notifier, channel_name)

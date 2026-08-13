@@ -13,6 +13,7 @@ from app.download_worker import DownloadHandoffWorker
 from app.poller import ChannelPoller
 from app.models import VideoEvent
 from app.state import StateStore
+from app.config import load_team_members
 from tests.conftest import CHANNEL_ID, VIDEO_ID
 from unittest.mock import Mock
 
@@ -165,6 +166,7 @@ def test_bridge_offline_does_not_block_polling_or_telegram(settings, tmp_path):
     executable.touch()
     nas = tmp_path / "nas"
     nas.mkdir()
+    (nas / load_team_members(settings.team_members_file)[0].nas_folder).mkdir()
     settings = replace(
         settings, ytdlp_path=str(executable), nas_output_root=nas,
         processing_work_root=tmp_path / "work",

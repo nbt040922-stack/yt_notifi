@@ -7,7 +7,7 @@ import threading
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from .config import CHANNEL_ID_RE, Channel, load_channels
+from .config import CHANNEL_ID_RE, Channel, TeamMember, load_channels, load_team_members
 
 CHANNEL_URL_RE = re.compile(r"^/channel/(UC[A-Za-z0-9_-]{22})/?$")
 
@@ -36,8 +36,11 @@ def parse_channel_id(value: str) -> str:
 
 
 class ChannelStore:
-    def __init__(self, path: Path):
+    def __init__(self, path: Path, members: list[TeamMember] | None = None):
         self.path = path
+        self.members = members or load_team_members()
+        self.owner_ids = {member.id for member in self.members}
+        self.default_owner = self.members[0].id
         self._lock = threading.Lock()
         self._generation = 0
 
@@ -50,7 +53,7 @@ class ChannelStore:
         if not self.path.exists():
             return []
         try:
-            channels = load_channels(self.path)
+            channels = load_channels(self.path, self.owner_ids, self.default_owner)
         except Exception as exc:
             raise ChannelStoreError(
                 "CONFIG_INVALID",
@@ -73,7 +76,7 @@ class ChannelStore:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         temporary = self.path.with_name(self.path.name + ".tmp")
         payload = [
-            {"channel_id": channel.channel_id, "name": channel.name, "enabled": channel.enabled}
+            {"channel_id": channel.channel_id, "name": channel.name, "enabled": channel.enabled, "owner_id": channel.owner_id}
             for channel in channels
         ]
         try:
@@ -88,27 +91,33 @@ class ChannelStore:
                 temporary.unlink()
         self._generation += 1
 
-    def add(self, value: str, name: str | None = None, enabled: bool = True) -> Channel:
+    def add(self, value: str, name: str | None = None, enabled: bool = True, owner_id: str | None = None) -> Channel:
         channel_id = parse_channel_id(value)
         display_name = (name or "").strip()
         if not display_name:
             raise ChannelStoreError("INVALID_CHANNEL_NAME", "Tên kênh không được để trống.")
+        owner_id = owner_id or self.default_owner
+        if owner_id not in self.owner_ids:
+            raise ChannelStoreError("INVALID_OWNER_ID", "Thành viên không hợp lệ.")
         with self._lock:
             channels = self._load_unlocked()
             if any(channel.channel_id == channel_id for channel in channels):
                 raise ChannelStoreError("CHANNEL_ALREADY_EXISTS", "Kênh này đã có trong danh sách theo dõi.", 409)
-            channel = Channel(channel_id, display_name, enabled)
+            channel = Channel(channel_id, display_name, enabled, owner_id)
             self._save_unlocked([*channels, channel])
             return channel
 
-    def update(self, channel_id: str, enabled: bool) -> tuple[Channel, bool]:
+    def update(self, channel_id: str, enabled: bool | None = None, owner_id: str | None = None) -> tuple[Channel, bool]:
         channel_id = parse_channel_id(channel_id)
+        if owner_id is not None and owner_id not in self.owner_ids:
+            raise ChannelStoreError("INVALID_OWNER_ID", "Thành viên không hợp lệ.")
         with self._lock:
             channels = self._load_unlocked()
             for index, channel in enumerate(channels):
                 if channel.channel_id == channel_id:
-                    changed_to_enabled = not channel.enabled and enabled
-                    updated = Channel(channel.channel_id, channel.name, enabled)
+                    new_enabled = channel.enabled if enabled is None else enabled
+                    changed_to_enabled = not channel.enabled and new_enabled
+                    updated = Channel(channel.channel_id, channel.name, new_enabled, owner_id or channel.owner_id)
                     channels[index] = updated
                     self._save_unlocked(channels)
                     return updated, changed_to_enabled

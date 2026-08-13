@@ -1,0 +1,22 @@
+[
+  {
+    "id": "member_1",
+    "display_name": "Member 1",
+    "nas_folder": "Member_1"
+  },
+  {
+    "id": "member_2",
+    "display_name": "Member 2",
+    "nas_folder": "Member_2"
+  },
+  {
+    "id": "member_3",
+    "display_name": "Member 3",
+    "nas_folder": "Member_3"
+  },
+  {
+    "id": "member_4",
+    "display_name": "Member 4",
+    "nas_folder": "Member_4"
+  }
+]

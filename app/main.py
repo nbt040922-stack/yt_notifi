@@ -13,7 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from .channel_store import ChannelStore, ChannelStoreError
 from .channel_resolver import ChannelResolveError, ResolvedChannel, resolve_channel
 from .cleanup_worker import CleanupWorker
-from .config import Channel, Settings
+from .config import Channel, Settings, load_team_members
 from .detector import resume_notifications
 from .download_worker import DownloadHandoffWorker
 from .poller import ChannelPoller
@@ -31,12 +31,14 @@ class ChannelCreate(BaseModel):
     url: str | None = Field(default=None, max_length=500)
     name: str = Field(min_length=1, max_length=200)
     enabled: bool = True
+    owner_id: str | None = None
 
 
 class ChannelUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    enabled: bool
+    enabled: bool | None = None
+    owner_id: str | None = None
 
 
 class ChannelResolve(BaseModel):
@@ -72,9 +74,10 @@ def create_app(
     channel_resolver=None,
 ) -> FastAPI:
     settings = settings or Settings.from_env()
+    team_members = load_team_members(settings.team_members_file)
     state = state or StateStore(settings.state_db)
     notifier = notifier or TelegramNotifier(settings.telegram_bot_token, settings.telegram_chat_id)
-    channel_store = channel_store or ChannelStore(settings.channels_file)
+    channel_store = channel_store or ChannelStore(settings.channels_file, team_members)
     channel_resolver = channel_resolver or resolve_channel
     def silence_channels():
         return channel_store.enabled()
@@ -102,7 +105,7 @@ def create_app(
     channels = monitored_channels()
     poller = ChannelPoller(
         settings, state, notifier, channels, channel_loader=monitored_channels,
-        processing_channel_loader=processing_channel_ids,
+        processing_channel_loader=processing_channel_ids, team_members=team_members,
     )
     download_worker = DownloadHandoffWorker(settings, state)
     process_worker = ProcessHandoffWorker(settings, state)
@@ -165,6 +168,7 @@ def create_app(
             "channel_id": channel.channel_id,
             "name": channel.name,
             "enabled": channel.enabled,
+            "owner_id": channel.owner_id,
             "last_poll_at": row["last_poll_at"] if row else None,
             "last_success_at": row["last_success_at"] if row else None,
             "latest_seen_video_id": row["latest_seen_video_id"] if row else None,
@@ -211,6 +215,10 @@ def create_app(
     @app.get("/api/channels")
     def api_channels() -> list[dict]:
         return [channel_payload(channel) for channel in channel_store.list()]
+
+    @app.get("/api/team-members")
+    def api_team_members() -> list[dict]:
+        return [member.__dict__ for member in team_members]
 
     @app.get("/api/jobs")
     def api_jobs() -> list[dict]:
@@ -332,14 +340,16 @@ def create_app(
         values = [value for value in (payload.channel_id, payload.url) if value]
         if len(values) != 1:
             raise ChannelStoreError("INVALID_REQUEST", "Hãy nhập một Channel ID hoặc URL.")
-        channel = channel_store.add(values[0], payload.name, payload.enabled)
+        channel = channel_store.add(values[0], payload.name, payload.enabled, payload.owner_id)
         if channel.enabled:
             state.reset_poll_baseline(channel.channel_id)
         return channel_payload(channel)
 
     @app.patch("/api/channels/{channel_id}")
     def update_channel(channel_id: str, payload: ChannelUpdate) -> dict:
-        channel, changed_to_enabled = channel_store.update(channel_id, payload.enabled)
+        if payload.enabled is None and payload.owner_id is None:
+            raise ChannelStoreError("INVALID_REQUEST", "Không có thay đổi.")
+        channel, changed_to_enabled = channel_store.update(channel_id, payload.enabled, payload.owner_id)
         if changed_to_enabled:
             state.reset_poll_baseline(channel.channel_id)
         return channel_payload(channel)

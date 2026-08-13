@@ -66,6 +66,26 @@ def test_valid_completed_job_deletes_only_workspace_and_persists(settings, tmp_p
     assert state.cleanup_job_due(NOW.isoformat()) is None
 
 
+def test_rewritten_part_filenames_are_verified_without_renaming(settings, tmp_path):
+    settings, state, workspace, parts = completed_job(settings, tmp_path, outputs=3)
+    renamed = []
+    for index, path in enumerate(parts, 1):
+        target = path.with_name(f"My Better Title_PART_{index}.mp4")
+        path.rename(target)
+        renamed.append(target)
+    job = state.processing_jobs()[0]
+    state.update_process_job(
+        job["id"], status="COMPLETED", process_state="DONE", progress=100,
+        processed_file_path=str(renamed[0]),
+        processed_files_json=json.dumps([str(path) for path in renamed]),
+    )
+    CleanupWorker(settings, state, probe=lambda _path: None).tick(NOW)
+    saved = state.processing_jobs()[0]
+    assert not workspace.exists()
+    assert json.loads(saved["processed_files_json"]) == [str(path) for path in renamed]
+    assert all(path.is_file() for path in renamed)
+
+
 def test_dry_run_verifies_but_never_deletes(settings, tmp_path):
     settings, state, workspace, parts = completed_job(settings, tmp_path, dry_run=True)
     seen = []

@@ -6,7 +6,7 @@ from unittest.mock import Mock
 
 from fastapi.testclient import TestClient
 
-from app.config import Channel
+from app.config import Channel, load_team_members
 from app.detector import handle_detected_video
 from app.jobs import sanitize_folder_name
 from app.main import create_app
@@ -28,14 +28,22 @@ def notifier():
     return value
 
 
+def owned(settings, root):
+    members = load_team_members(settings.team_members_file)
+    member_root = root / members[0].nas_folder
+    member_root.mkdir(parents=True)
+    return members, member_root
+
+
 def test_new_video_creates_one_queued_job_and_reuses_folder(settings, tmp_path):
     root = tmp_path / "nas"
-    folder = root / "Test Channel"
-    folder.mkdir(parents=True)
+    members, member_root = owned(settings, root)
+    folder = member_root / "Test Channel"
+    folder.mkdir()
     state, telegram = StateStore(settings.state_db), notifier()
 
-    assert handle_detected_video(event(), state, telegram, {CHANNEL_ID: "Test Channel"}, nas_output_root=root) == "NEW"
-    assert handle_detected_video(event(), state, telegram, {CHANNEL_ID: "Test Channel"}, nas_output_root=root) == "DUPLICATE"
+    assert handle_detected_video(event(), state, telegram, {CHANNEL_ID: "Test Channel"}, nas_output_root=root, owner_id=members[0].id, team_members=members) == "NEW"
+    assert handle_detected_video(event(), state, telegram, {CHANNEL_ID: "Test Channel"}, nas_output_root=root, owner_id=members[0].id, team_members=members) == "DUPLICATE"
 
     jobs = state.processing_jobs()
     assert len(jobs) == 1
@@ -56,20 +64,24 @@ def test_baseline_creates_no_job(settings, tmp_path):
 
 def test_missing_channel_folder_is_created_with_safe_name(settings, tmp_path):
     state = StateStore(settings.state_db)
+    members, member_root = owned(settings, tmp_path)
     handle_detected_video(
         event(), state, notifier(), {CHANNEL_ID: "Test: Channel?"}, nas_output_root=tmp_path,
+        owner_id=members[0].id, team_members=members,
     )
     job = state.processing_jobs()[0]
     assert job["channel_name"] == "Test: Channel?"
-    assert job["output_dir"] == str(tmp_path / "Test Channel")
-    assert (tmp_path / "Test Channel").is_dir()
+    assert job["output_dir"] == str(member_root / "Test Channel")
+    assert (member_root / "Test Channel").is_dir()
 
 
 def test_nas_unavailable_records_failed_job_but_telegram_still_sends(settings, tmp_path):
     state, telegram = StateStore(settings.state_db), notifier()
     missing = tmp_path / "missing"
+    members = load_team_members(settings.team_members_file)
     assert handle_detected_video(
         event(), state, telegram, {CHANNEL_ID: "Test"}, nas_output_root=missing,
+        owner_id=members[0].id, team_members=members,
     ) == "NEW"
     job = state.processing_jobs()[0]
     assert (job["status"], job["error"]) == ("FAILED", "NAS_UNAVAILABLE")

@@ -50,7 +50,10 @@ def downloaded_job(settings, tmp_path):
     source = tmp_path / "source.mp4"
     source.write_bytes(b"video")
     event = VideoEvent(VIDEO_ID, CHANNEL_ID, "Video", "", "", f"https://www.youtube.com/watch?v={VIDEO_ID}")
-    assert state.create_processing_job(event, "JOIN Name", str(tmp_path / "nas"), "QUEUED", None)
+    assert state.create_processing_job(
+        event, "JOIN Name", str(tmp_path / "Member_2" / "JOIN Name"), "QUEUED", None,
+        owner_id="member_2",
+    )
     job = state.processing_jobs()[0]
     state.update_download_job(
         job["id"], status="DOWNLOADED", external_id="download-1",
@@ -75,6 +78,7 @@ def test_downloaded_job_submits_once_and_tracks_existing(settings, tmp_path):
     assert bridge.posts[0][1]["handoff_id"] == str(job["id"])
     assert bridge.posts[0][1]["source_file"] == str(source)
     assert bridge.posts[0][1]["output_dir"] == job["output_dir"]
+    assert job["owner_id"] == "member_2"
     assert bridge.posts[0][1]["enhanced_content_selection"] is True
     assert (job["status"], job["process_progress"]) == ("PROCESSING", 42)
 
@@ -90,6 +94,7 @@ def test_bridge_offline_restart_retries_same_enhanced_handoff(settings, tmp_path
     assert state.processing_jobs()[0]["status"] == "PROCESSING"
     assert len(bridge.posts) == 2
     assert bridge.posts[0][1]["handoff_id"] == bridge.posts[1][1]["handoff_id"]
+    assert bridge.posts[0][1]["output_dir"] == bridge.posts[1][1]["output_dir"]
     assert all(post[1]["enhanced_content_selection"] is True for post in bridge.posts)
 
 
@@ -103,7 +108,7 @@ def test_active_state_mapping(settings, tmp_path, remote, local):
 
 def test_done_persists_exact_part_paths(settings, tmp_path):
     state, _ = downloaded_job(settings, tmp_path)
-    exact = [tmp_path / "nas" / "PART_1.mp4", tmp_path / "nas" / "PART_2.mp4"]
+    exact = [tmp_path / "nas" / f"My Better Title_PART_{index}.mp4" for index in range(1, 4)]
     exact[0].parent.mkdir()
     for path in exact:
         path.write_bytes(b"part")

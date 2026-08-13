@@ -20,6 +20,7 @@ class Settings:
     host: str = "127.0.0.1"
     port: int = 8787
     channels_file: Path = ROOT / "config" / "channels.json"
+    team_members_file: Path = ROOT / "config" / "team_members.json"
     state_db: Path = ROOT / "state" / "yt_notifi.db"
     enable_background_tasks: bool = True
     ytdlp_path: str = ""
@@ -43,6 +44,7 @@ class Settings:
             host=os.getenv("YT_NOTIFI_BIND_HOST", os.getenv("HOST", "127.0.0.1")),
             port=int(os.getenv("YT_NOTIFI_PORT", os.getenv("PORT", "8787"))),
             channels_file=Path(os.getenv("CHANNELS_FILE", ROOT / "config" / "channels.json")),
+            team_members_file=Path(os.getenv("TEAM_MEMBERS_FILE", ROOT / "config" / "team_members.json")),
             state_db=Path(os.getenv("STATE_DB", ROOT / "state" / "yt_notifi.db")),
             ytdlp_path=os.getenv("YTDLP_PATH", ""),
             poll_interval_seconds=max(1, int(os.getenv("POLL_INTERVAL_SECONDS", "10"))),
@@ -63,9 +65,34 @@ class Channel:
     channel_id: str
     name: str
     enabled: bool = True
+    owner_id: str = "member_1"
 
 
-def load_channels(path: Path) -> list[Channel]:
+@dataclass(frozen=True)
+class TeamMember:
+    id: str
+    display_name: str
+    nas_folder: str
+
+
+def load_team_members(path: Path = ROOT / "config" / "team_members.json") -> list[TeamMember]:
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, list) or len(data) != 4:
+        raise ValueError("team_members.json must contain exactly 4 members")
+    members = [
+        TeamMember(str(item.get("id") or ""), str(item.get("display_name") or ""), str(item.get("nas_folder") or ""))
+        for item in data
+    ]
+    if any(not member.id or not member.display_name or not member.nas_folder for member in members):
+        raise ValueError("Team member fields must not be empty")
+    if len({member.id for member in members}) != 4:
+        raise ValueError("Team member IDs must be unique")
+    if any(Path(member.nas_folder).name != member.nas_folder or member.nas_folder in {".", ".."} for member in members):
+        raise ValueError("Invalid team member NAS folder")
+    return members
+
+
+def load_channels(path: Path, owner_ids: set[str] | None = None, default_owner: str = "member_1") -> list[Channel]:
     data = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(data, list):
         raise ValueError("channels.json must contain a JSON array")
@@ -74,7 +101,10 @@ def load_channels(path: Path) -> list[Channel]:
         channel_id = str(item.get("channel_id", ""))
         if not CHANNEL_ID_RE.fullmatch(channel_id):
             raise ValueError(f"Invalid YouTube channel_id: {channel_id!r}")
-        channels.append(Channel(channel_id, str(item.get("name") or channel_id), bool(item.get("enabled", True))))
+        owner_id = str(item.get("owner_id") or default_owner)
+        if owner_ids is not None and owner_id not in owner_ids:
+            raise ValueError(f"Invalid owner_id: {owner_id!r}")
+        channels.append(Channel(channel_id, str(item.get("name") or channel_id), bool(item.get("enabled", True)), owner_id))
     return channels
 
 

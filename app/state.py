@@ -90,6 +90,7 @@ class StateStore:
                     video_title TEXT NOT NULL,
                     source_channel_id TEXT NOT NULL,
                     channel_name TEXT NOT NULL,
+                    owner_id TEXT,
                     output_dir TEXT NOT NULL,
                     error TEXT,
                     download_external_id TEXT,
@@ -119,6 +120,7 @@ class StateStore:
             )
             job_columns = {row[1] for row in db.execute("PRAGMA table_info(processing_jobs)")}
             job_additions = {
+                "owner_id": "TEXT",
                 "download_external_id": "TEXT",
                 "download_state": "TEXT",
                 "download_progress": "REAL NOT NULL DEFAULT 0",
@@ -194,15 +196,16 @@ class StateStore:
         output_dir: str,
         status: str,
         error: str | None,
+        owner_id: str | None = None,
     ) -> bool:
         with self._connect() as db:
             cursor = db.execute(
                 """INSERT OR IGNORE INTO processing_jobs
                    (created_at, status, video_id, video_url, video_title, source_channel_id,
-                    channel_name, output_dir, error, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    channel_name, owner_id, output_dir, error, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (utc_now(), status, event.video_id, event.url, event.title, event.channel_id,
-                 channel_name, output_dir, error, utc_now()),
+                 channel_name, owner_id, output_dir, error, utc_now()),
             )
             return cursor.rowcount == 1
 

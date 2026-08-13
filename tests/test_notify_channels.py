@@ -176,6 +176,6 @@ def test_same_channel_in_both_collections_notifies_once_and_keeps_silence_job(se
 
 def test_dashboard_exposes_two_tabs_and_bulk_results(settings):
     html = client(settings)[0].get("/").text
-    assert "Silence Channels" in html and "Notify Channels" in html
+    assert "/api/team-members" in html and "Notify Channels" in html
     assert 'id="notify-input"' in html and "/api/notify-channels/bulk" in html
     assert "result.added" in html and "result.existing" in html and "result.failed" in html

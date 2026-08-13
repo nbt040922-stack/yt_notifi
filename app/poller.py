@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
-from .config import CHANNEL_ID_RE, Channel, Settings, enabled_channels, find_ytdlp
+from .config import CHANNEL_ID_RE, Channel, Settings, TeamMember, enabled_channels, find_ytdlp, load_team_members
 from .detector import VIDEO_ID_RE, handle_detected_video
 from .models import VideoEvent
 from .state import StateStore
@@ -73,12 +73,14 @@ class ChannelPoller:
         runner=subprocess.run,
         channel_loader: Callable[[], list[Channel]] | None = None,
         processing_channel_loader: Callable[[], set[str]] | None = None,
+        team_members: list[TeamMember] | None = None,
     ):
         self.settings = settings
         self.state = state
         self.notifier = notifier
         self.channel_loader = channel_loader or (lambda: enabled_channels(settings.channels_file) if channels is None else channels)
         self.processing_channel_loader = processing_channel_loader
+        self.team_members = team_members or load_team_members(settings.team_members_file)
         self.channels: list[Channel] = []
         self.names: dict[str, str] = {}
         self.refresh_channels()
@@ -111,6 +113,8 @@ class ChannelPoller:
                 event, self.state, self.notifier, self.names,
                 baseline=baseline, nas_output_root=self.settings.nas_output_root,
                 create_job=channel.channel_id in self.processing_ids,
+                owner_id=channel.owner_id,
+                team_members=self.team_members,
             )
             results.append((event, classification))
             if classification == "NEW":

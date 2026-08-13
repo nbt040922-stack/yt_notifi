@@ -42,7 +42,7 @@
     dialog::backdrop { background: #000a; }
     dialog h3 { margin-top: 0; }
     label { display: block; color: #aeb8c7; font-size: 13px; margin: 16px 0 6px; }
-    input, textarea { width: 100%; border: 1px solid #344057; border-radius: 8px; background: #0b0f17; color: #fff; padding: 11px; }
+    input, textarea, select { width: 100%; border: 1px solid #344057; border-radius: 8px; background: #0b0f17; color: #fff; padding: 11px; }
     textarea { min-height: 170px; resize: vertical; }
     .tabs { display: flex; gap: 8px; margin: 28px 0 8px; }
     .tabs button.active { background: #3b6df6; border-color: #3b6df6; }
@@ -72,7 +72,7 @@
     <div class="metric"><span>Telegram</span><strong id="telegram">—</strong></div>
     <div class="metric"><span>Kênh đang bật</span><strong id="enabled">—</strong></div>
   </section>
-  <nav class="tabs"><button class="active" data-tab="silence">Silence Channels</button><button data-tab="notify">Notify Channels</button></nav>
+  <nav class="tabs" id="team-tabs"><button data-tab="notify">Notify Channels</button></nav>
   <section class="tab-pane" id="silence-tab">
     <div class="toolbar"><h2>KÊNH THEO DÕI</h2><button class="primary" id="open-add">+ Thêm kênh</button></div>
     <div id="channels"></div>
@@ -122,6 +122,9 @@
   let resolvedId = '';
   let resolveTimer;
   let resolveSequence = 0;
+  let teamMembers = [];
+  let activeOwner = '';
+  let notifyActive = false;
   const formatTime = value => value ? new Date(value).toLocaleTimeString('vi-VN') : '—';
   const escapeText = value => String(value ?? '—');
 
@@ -155,11 +158,14 @@
     const status = document.createElement('span'); status.textContent = channel.status;
     badge.append(dot, status); info.append(title, id, badge);
     const actions = document.createElement('div'); actions.className = 'actions';
+    const move = document.createElement('select'); move.setAttribute('aria-label', `Chuyển ${channel.name}`);
+    for (const member of teamMembers) { const option = document.createElement('option'); option.value = member.id; option.textContent = member.display_name; option.selected = member.id === channel.owner_id; move.append(option); }
+    move.onchange = async () => { await request(`/api/channels/${channel.channel_id}`, {method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({owner_id:move.value})}); activeOwner = move.value; await refresh(); };
     const toggle = document.createElement('button'); toggle.textContent = channel.enabled ? 'Tắt' : 'Bật';
     toggle.onclick = async () => { await request(`/api/channels/${channel.channel_id}`, {method: 'PATCH', headers: {'Content-Type':'application/json'}, body: JSON.stringify({enabled: !channel.enabled})}); await refresh(); };
     const remove = document.createElement('button'); remove.className = 'danger'; remove.textContent = 'Xóa';
     remove.onclick = async () => { if (confirm('Xóa kênh khỏi danh sách theo dõi? Lịch sử phát hiện vẫn được giữ.')) { await request(`/api/channels/${channel.channel_id}`, {method: 'DELETE'}); showNotice('Đã xóa kênh.'); await refresh(); } };
-    actions.append(toggle, remove); row.append(info, actions);
+    actions.append(move, toggle, remove); row.append(info, actions);
     const details = document.createElement('div'); details.className = 'details';
     details.append(detail('Poll gần nhất', formatTime(channel.last_poll_at)), detail('Thành công gần nhất', formatTime(channel.last_success_at)), detail('Video gần nhất', channel.latest_seen_video_id), detail('Số lỗi', channel.failures));
     card.append(row, details); return card;
@@ -188,7 +194,8 @@
 
   function jobCard(job) {
     const row = document.createElement('div'); row.className = 'job';
-    const channel = document.createElement('strong'); channel.textContent = job.channel_name;
+    const owner = teamMembers.find(member => member.id === (job.owner_id || teamMembers[0]?.id));
+    const channel = document.createElement('strong'); channel.textContent = `${job.channel_name} · ${owner?.display_name || 'Legacy'}`;
     const video = document.createElement('span'); video.textContent = job.video_title || job.video_id;
     const jobError = job.process_error || job.download_error || job.error;
     const status = document.createElement('span'); status.textContent = jobError ? `${job.status}: ${jobError}` : job.status;
@@ -204,14 +211,22 @@
 
   async function refresh() {
     try {
-      const [status, channels, notifyChannels, jobs] = await Promise.all([request('/api/status'), request('/api/channels'), request('/api/notify-channels'), request('/api/jobs')]);
+      const [status, members, channels, notifyChannels, jobs] = await Promise.all([request('/api/status'), request('/api/team-members'), request('/api/channels'), request('/api/notify-channels'), request('/api/jobs')]);
+      teamMembers = members;
+      if (!activeOwner) activeOwner = members[0].id;
+      const tabs = document.querySelector('#team-tabs');
+      tabs.replaceChildren(...members.map(member => { const button = document.createElement('button'); button.textContent = member.display_name; button.classList.toggle('active', !notifyActive && activeOwner === member.id); button.onclick = () => { activeOwner = member.id; notifyActive = false; refresh(); }; return button; }), (() => { const button = document.createElement('button'); button.textContent = 'Notify Channels'; button.classList.toggle('active', notifyActive); button.onclick = () => { notifyActive = true; refresh(); }; return button; })());
+      document.querySelector('#silence-tab').hidden = notifyActive;
+      document.querySelector('#notify-tab').hidden = !notifyActive;
       document.querySelector('#interval').textContent = `${status.poll_interval_seconds}s`;
       document.querySelector('#ytdlp').textContent = status.ytdlp;
       document.querySelector('#telegram').textContent = status.telegram;
       document.querySelector('#enabled').textContent = status.enabled_channels;
-      list.replaceChildren(...(channels.length ? channels.map(channelCard) : [Object.assign(document.createElement('div'), {className:'empty', textContent:'Chưa có kênh nào.'})]));
+      const ownedChannels = channels.filter(channel => channel.owner_id === activeOwner);
+      const ownedJobs = jobs.filter(job => (job.owner_id || members[0].id) === activeOwner);
+      list.replaceChildren(...(ownedChannels.length ? ownedChannels.map(channelCard) : [Object.assign(document.createElement('div'), {className:'empty', textContent:'Chưa có kênh nào.'})]));
       notifyList.replaceChildren(...(notifyChannels.length ? notifyChannels.map(notifyChannelCard) : [Object.assign(document.createElement('div'), {className:'empty', textContent:'Chưa có kênh chỉ thông báo.'})]));
-      jobsList.replaceChildren(...(jobs.length ? jobs.map(jobCard) : [Object.assign(document.createElement('div'), {className:'empty', textContent:'Chưa có job nào.'})]));
+      jobsList.replaceChildren(...(ownedJobs.length ? ownedJobs.map(jobCard) : [Object.assign(document.createElement('div'), {className:'empty', textContent:'Chưa có job nào.'})]));
     } catch (error) {
       list.replaceChildren(Object.assign(document.createElement('div'), {className:'error', textContent:error.message}));
     }
@@ -250,15 +265,10 @@
     event.preventDefault();
     const error = document.querySelector('#form-error'); error.textContent = '';
     try {
-      await request('/api/channels', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({channel_id:resolvedId, name:nameInput.value.trim()})});
+      await request('/api/channels', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({channel_id:resolvedId, name:nameInput.value.trim(), owner_id:activeOwner})});
       event.target.reset(); resetResolver(); dialog.close(); showNotice('Đã thêm kênh.'); await refresh();
     } catch (failure) { error.textContent = failure.message; }
   };
-  document.querySelectorAll('[data-tab]').forEach(button => button.onclick = () => {
-    document.querySelectorAll('[data-tab]').forEach(item => item.classList.toggle('active', item === button));
-    document.querySelector('#silence-tab').hidden = button.dataset.tab !== 'silence';
-    document.querySelector('#notify-tab').hidden = button.dataset.tab !== 'notify';
-  });
   document.querySelector('#notify-form').onsubmit = async event => {
     event.preventDefault();
     const input = document.querySelector('#notify-input');
