@@ -54,6 +54,7 @@ class ProcessHandoffWorker:
                     "output_dir": job["output_dir"],
                     "video_id": job["video_id"],
                     "video_title": job["video_title"],
+                    "enhanced_content_selection": True,
                 },
             )
         if response.status_code >= 500:

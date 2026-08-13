@@ -30,6 +30,7 @@ class Bridge:
         self.responses, self.posts, self.gets = iter(responses), [], []
 
     def post(self, url, json):
+        assert json["enhanced_content_selection"] is True
         self.posts.append((url, json))
         return self._next()
 
@@ -74,18 +75,22 @@ def test_downloaded_job_submits_once_and_tracks_existing(settings, tmp_path):
     assert bridge.posts[0][1]["handoff_id"] == str(job["id"])
     assert bridge.posts[0][1]["source_file"] == str(source)
     assert bridge.posts[0][1]["output_dir"] == job["output_dir"]
+    assert bridge.posts[0][1]["enhanced_content_selection"] is True
     assert (job["status"], job["process_progress"]) == ("PROCESSING", 42)
 
 
-def test_bridge_offline_retries_then_recovers(settings, tmp_path):
+def test_bridge_offline_restart_retries_same_enhanced_handoff(settings, tmp_path):
     state, _ = downloaded_job(settings, tmp_path)
     bridge = Bridge([httpx.ConnectError("offline"), Response(payload("PROCESSING"))])
     worker = ProcessHandoffWorker(settings, state, bridge)
     now = datetime(2026, 8, 12, tzinfo=timezone.utc)
     worker.tick(now)
     assert state.processing_jobs()[0]["status"] == "PROCESS_PENDING"
-    worker.tick(now + timedelta(seconds=5))
+    ProcessHandoffWorker(settings, state, bridge).tick(now + timedelta(seconds=5))
     assert state.processing_jobs()[0]["status"] == "PROCESSING"
+    assert len(bridge.posts) == 2
+    assert bridge.posts[0][1]["handoff_id"] == bridge.posts[1][1]["handoff_id"]
+    assert all(post[1]["enhanced_content_selection"] is True for post in bridge.posts)
 
 
 @pytest.mark.parametrize("remote,local", [("QUEUED", "PROCESS_PENDING"), ("PROCESSING", "PROCESSING"), ("FINALIZING", "PROCESSING")])
