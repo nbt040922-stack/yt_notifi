@@ -213,8 +213,19 @@ def test_startup_task_install_is_idempotent_and_user_scoped():
     assert '"ContentOps Production"' in script
     assert "-AtLogOn -User $user" in script
     assert "-LogonType Interactive" in script
-    assert "-StartupDelaySeconds 20" in script
+    assert '"wscript.exe"' in script
+    assert "start_production_hidden.vbs" in script
+    assert "StartupDelaySeconds" not in script
     assert "-Force" in script
+
+
+def test_hidden_wrapper_owns_the_only_startup_delay():
+    wrapper = (ROOT / "scripts" / "start_production_hidden.vbs").read_text(encoding="utf-8")
+    assert "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden" in wrapper
+    assert "start_production.ps1" in wrapper
+    assert "-StartupDelaySeconds 20" in wrapper
+    assert "shell.Run command, 0, False" in wrapper
+    assert "TELEGRAM" not in wrapper and "TOKEN" not in wrapper
 
 
 def test_production_scripts_parse():
