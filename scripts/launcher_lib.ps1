@@ -138,6 +138,34 @@ function Wait-ServiceHealth(
     return "TIMEOUT"
 }
 
+function Wait-QwenReady(
+    [int]$ProcessId,
+    [int]$TimeoutSeconds = 120,
+    [scriptblock]$IsRunning = { param($id) [bool](Get-Process -Id $id -ErrorAction SilentlyContinue) },
+    [scriptblock]$HealthProbe = { Invoke-RestMethod "http://127.0.0.1:8792/health" -TimeoutSec 2 },
+    [scriptblock]$OnState = { param($state) }
+) {
+    $timer = [Diagnostics.Stopwatch]::StartNew()
+    $lastState = $null
+    while ($timer.Elapsed.TotalSeconds -lt $TimeoutSeconds) {
+        if (-not (& $IsRunning $ProcessId)) { return "EXITED" }
+        try {
+            $health = & $HealthProbe
+            $state = [string]$health.status
+            if ($state -and $state -ne $lastState) {
+                & $OnState $state $health
+                $lastState = $state
+            }
+            if ($state -eq "ERROR") { return "ERROR" }
+            if ($state -eq "READY" -and $health.model_loaded -and $health.warmed_up) {
+                return "READY"
+            }
+        } catch {}
+        Start-Sleep -Milliseconds 500
+    }
+    return "TIMEOUT"
+}
+
 function Test-LocalPortListening([int]$Port) {
     return [bool](Get-NetTCPConnection -State Listen -LocalPort $Port -ErrorAction SilentlyContinue)
 }
@@ -208,7 +236,7 @@ function Stop-OwnedProcessTree(
     function Add-Children([int]$ParentId) {
         foreach ($child in @($all | Where-Object ParentProcessId -eq $ParentId)) {
             Add-Children $child.ProcessId
-            $owned.Add([int]$child.ProcessId)
+            [void]$owned.Add([int]$child.ProcessId)
         }
     }
     Add-Children $ProcessId

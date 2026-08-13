@@ -14,12 +14,15 @@ $stopped = @()
 $targets = @(
     @("watcher", "uvicorn app.main:app", "YT_NOTIFI"),
     @("silence", "contentops_process_bridge.py", "SILENCE CUTTER"),
+    @("qwen_worker", "qwen_worker.supervisor", "QWEN WORKER"),
     @("ytdownload", "electron.exe", "YTDOWNLOAD")
 )
 foreach ($target in $targets) {
     $name, $marker, $label = $target
-    $pidValue = $runtime."${name}_pid"
-    $startedAt = $runtime."${name}_started_at"
+    $pidProperty = $runtime.PSObject.Properties["${name}_pid"]
+    $startedProperty = $runtime.PSObject.Properties["${name}_started_at"]
+    $pidValue = $(if ($pidProperty) { $pidProperty.Value } else { $null })
+    $startedAt = $(if ($startedProperty) { $startedProperty.Value } else { $null })
     if ($pidValue -and (Stop-OwnedProcessTree ([int]$pidValue) ([string]$startedAt) $marker -WhatIf:$WhatIf)) {
         $stopped += $label
     }

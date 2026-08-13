@@ -160,6 +160,30 @@ def test_production_health_timeout():
     assert result.stdout.strip() == "TIMEOUT"
 
 
+def test_qwen_health_accepts_only_loaded_and_warm_ready():
+    result = ps(
+        "$script:i=0; $states=@("
+        "[pscustomobject]@{status='STARTING';model_loaded=$false;warmed_up=$false},"
+        "[pscustomobject]@{status='LOADING_MODEL';model_loaded=$false;warmed_up=$false},"
+        "[pscustomobject]@{status='WARMING_UP';model_loaded=$true;warmed_up=$false},"
+        "[pscustomobject]@{status='READY';model_loaded=$true;warmed_up=$true});"
+        "$global:seen=@(); $result=Wait-QwenReady 1 5 {$true} {$value=$states[$script:i];"
+        "$script:i=[Math]::Min($script:i+1,$states.Count-1);$value} {$global:seen += $args[0]};"
+        "Write-Output $result; Write-Output ($global:seen -join ',')"
+    )
+    assert result.stdout.strip().splitlines() == [
+        "READY", "STARTING,LOADING_MODEL,WARMING_UP,READY"
+    ]
+
+
+def test_qwen_error_fails_startup_wait():
+    result = ps(
+        "Wait-QwenReady 1 2 {$true} "
+        "{[pscustomobject]@{status='ERROR';model_loaded=$false;warmed_up=$false}}"
+    )
+    assert result.stdout.strip() == "ERROR"
+
+
 def test_configurable_dashboard_bind(monkeypatch):
     monkeypatch.setenv("YT_NOTIFI_BIND_HOST", "0.0.0.0")
     monkeypatch.setenv("YT_NOTIFI_PORT", "9876")
@@ -184,6 +208,13 @@ def test_production_startup_order_and_local_health_urls():
     assert "http://127.0.0.1:8790/health" in script
     assert "http://127.0.0.1:8791/health" in script
     assert "http://127.0.0.1:$port/health" in script
+    assert 'Start-Process -FilePath $silencePython -ArgumentList @("-m", "qwen_worker.supervisor")' in script
+    assert '-WorkingDirectory $silenceRoot -WindowStyle Hidden' in script
+    assert 'local_models\\Qwen2.5-VL-7B-Instruct-AWQ' in script
+    assert "$env:SEMANTIC_QWEN_MODEL" in script
+    assert "Wait-QwenReady $qwen_worker.Id $QwenTimeoutSeconds" in script
+    assert "Qwen Worker port 8792 is already in use" in script
+    assert script.index("qwen_worker.supervisor") < script.index("Assert-Healthy $ytdownload")
     assert '"--host", $bindHost' in script
     assert script.index("Test-LocalPortListening 8790") < script.index("Start-Process -FilePath $electron")
     assert script.index("Test-LocalPortListening 8791") < script.index("Start-Process -FilePath $silencePython")
@@ -205,7 +236,19 @@ def test_production_duplicate_guard_and_failure_cleanup():
 def test_stop_order_and_owned_process_validation():
     script = (ROOT / "scripts" / "stop_production.ps1").read_text(encoding="utf-8")
     assert script.index('"watcher"') < script.index('"silence"') < script.index('"ytdownload"')
+    assert '"qwen_worker", "qwen_worker.supervisor"' in script
     assert "Stop-OwnedProcessTree" in script and "production-runtime.json" in script
+    assert 'PSObject.Properties["${name}_pid"]' in script
+
+
+def test_qwen_runtime_status_and_firewall_boundary():
+    start = (ROOT / "scripts" / "start_production.ps1").read_text(encoding="utf-8")
+    status = (ROOT / "scripts" / "production_status.ps1").read_text(encoding="utf-8")
+    firewall = (ROOT / "scripts" / "setup_lan_access.ps1").read_text(encoding="utf-8")
+    assert '"qwen_worker"' in start and 'qwen_worker_port"] = 8792' in start
+    assert "http://127.0.0.1:8792/health" in status
+    assert "Model Loaded" in status and "Warm" in status
+    assert "8792" not in firewall
 
 
 def test_startup_task_install_is_idempotent_and_user_scoped():
