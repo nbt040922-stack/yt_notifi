@@ -20,10 +20,11 @@ BACKOFF_SECONDS = (5, 10, 20, 30, 60)
 
 
 class ProcessHandoffWorker:
-    def __init__(self, settings: Settings, state: StateStore, client=None):
+    def __init__(self, settings: Settings, state: StateStore, client=None, control=None):
         self.settings = settings
         self.state = state
         self.client = client or httpx.Client(timeout=5)
+        self.control = control
         parsed = urlsplit(settings.silence_cutter_bridge_url)
         self.bridge_url = settings.silence_cutter_bridge_url.rstrip("/")
         self.bridge_valid = (
@@ -47,6 +48,9 @@ class ProcessHandoffWorker:
         if external_id:
             response = self.client.get(f"{self.bridge_url}/api/process-jobs/{external_id}")
         else:
+            if self.control and not self.control.is_ready():
+                self.state.pause_process_job(job["id"], self.control.pause_reason())
+                return
             try:
                 processing_output_dir = self._processing_output_dir(job)
             except RuntimeError as exc:

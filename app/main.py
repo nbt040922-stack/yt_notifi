@@ -8,7 +8,7 @@ from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
 from .channel_store import ChannelStore, ChannelStoreError
 from .channel_resolver import ChannelResolveError, ResolvedChannel, resolve_channel
@@ -19,6 +19,7 @@ from .download_worker import DownloadHandoffWorker
 from .nas_sync_worker import NasSyncWorker
 from .poller import ChannelPoller
 from .process_worker import ProcessHandoffWorker
+from .processing_control import ProcessingControl
 from .state import StateStore
 from .telegram import TelegramNotifier
 
@@ -53,6 +54,12 @@ class NotifyBulkCreate(BaseModel):
     channels: list[str] = Field(min_length=1, max_length=500)
 
 
+class ProcessingControlUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    silence_engine_enabled: StrictBool
+
+
 def configure_logging() -> None:
     log_dir = Path(__file__).resolve().parent.parent / "logs"
     log_dir.mkdir(exist_ok=True)
@@ -72,6 +79,7 @@ def create_app(
     notifier: TelegramNotifier | None = None,
     channel_store: ChannelStore | None = None,
     channel_resolver=None,
+    processing_control=None,
 ) -> FastAPI:
     settings = settings or Settings.from_env()
     team_members = load_team_members(settings.team_members_file)
@@ -108,7 +116,8 @@ def create_app(
         processing_channel_loader=processing_channel_ids, team_members=team_members,
     )
     download_worker = DownloadHandoffWorker(settings, state)
-    process_worker = ProcessHandoffWorker(settings, state)
+    processing_control = processing_control or ProcessingControl(settings, state)
+    process_worker = ProcessHandoffWorker(settings, state, control=processing_control)
     nas_sync_worker = NasSyncWorker(settings, state)
     cleanup_worker = CleanupWorker(settings, state)
 
@@ -130,6 +139,7 @@ def create_app(
                 asyncio.create_task(notification_retry_loop()),
                 asyncio.create_task(poller.run(stop)),
                 asyncio.create_task(download_worker.run(stop)),
+                asyncio.create_task(processing_control.run(stop)),
                 asyncio.create_task(process_worker.run(stop)),
                 asyncio.create_task(nas_sync_worker.run(stop)),
                 asyncio.create_task(cleanup_worker.run(stop)),
@@ -225,6 +235,14 @@ def create_app(
     @app.get("/api/jobs")
     def api_jobs() -> list[dict]:
         return [dict(job) for job in state.processing_jobs()]
+
+    @app.get("/api/processing-control")
+    def get_processing_control() -> dict:
+        return processing_control.snapshot()
+
+    @app.patch("/api/processing-control")
+    def update_processing_control(payload: ProcessingControlUpdate) -> dict:
+        return processing_control.request(payload.silence_engine_enabled)
 
     @app.post("/api/jobs/{job_id}/retry-nas-sync")
     def retry_nas_sync(job_id: int) -> dict[str, str]:

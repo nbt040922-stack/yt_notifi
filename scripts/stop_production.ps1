@@ -4,7 +4,9 @@ $ErrorActionPreference = "Stop"
 $root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 . (Join-Path $PSScriptRoot "launcher_lib.ps1")
 $runtimePath = Join-Path $root "state\production-runtime.json"
+$controlPath = Join-Path $root "state\processing-control.json"
 $runtime = Read-RuntimeState $runtimePath
+$control = Read-RuntimeState $controlPath
 if (-not $runtime) {
     Write-Host "Content Ops production is not running."
     exit 0
@@ -19,8 +21,11 @@ $targets = @(
 )
 foreach ($target in $targets) {
     $name, $marker, $label = $target
-    $pidProperty = $runtime.PSObject.Properties["${name}_pid"]
-    $startedProperty = $runtime.PSObject.Properties["${name}_started_at"]
+    $source = $(if ($name -eq "qwen_worker" -and $control) { $control } else { $runtime })
+    $pidName = $(if ($name -eq "qwen_worker" -and $control) { "qwen_pid" } else { "${name}_pid" })
+    $startedName = $(if ($name -eq "qwen_worker" -and $control) { "qwen_started_at" } else { "${name}_started_at" })
+    $pidProperty = $source.PSObject.Properties[$pidName]
+    $startedProperty = $source.PSObject.Properties[$startedName]
     $pidValue = $(if ($pidProperty) { $pidProperty.Value } else { $null })
     $startedAt = $(if ($startedProperty) { $startedProperty.Value } else { $null })
     if ($pidValue -and (Stop-OwnedProcessTree ([int]$pidValue) ([string]$startedAt) $marker -WhatIf:$WhatIf)) {

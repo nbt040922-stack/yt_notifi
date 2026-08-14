@@ -15,10 +15,13 @@
     h2 { margin: 38px 0 14px; font-size: 13px; letter-spacing: .14em; color: #9da8b8; }
     .running, .badge { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; }
     .dot { width: 9px; height: 9px; border-radius: 50%; background: #42d392; box-shadow: 0 0 12px #42d39299; }
-    .summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; overflow: hidden; border: 1px solid #293142; border-radius: 12px; background: #293142; }
+    .summary { display: grid; grid-template-columns: repeat(5, 1fr); gap: 1px; overflow: hidden; border: 1px solid #293142; border-radius: 12px; background: #293142; }
     .metric { padding: 18px; background: #111620; }
     .metric span { display: block; color: #8f9bad; font-size: 12px; margin-bottom: 7px; }
     .metric strong { font-size: 17px; }
+    .metric small { display: block; color: #8f9bad; margin-top: 7px; }
+    #engine-toggle.engine-on { background: #176b4b; border-color: #42d392; }
+    #engine-toggle.engine-off, #engine-toggle.engine-error { background: #55252c; border-color: #a94a58; }
     .toolbar { display: flex; justify-content: space-between; align-items: center; }
     button { border: 1px solid #344057; border-radius: 8px; background: #171e2b; color: #edf1f7; padding: 9px 13px; cursor: pointer; }
     button:hover { border-color: #647697; }
@@ -71,6 +74,7 @@
     <div class="metric"><span>yt-dlp</span><strong id="ytdlp">—</strong></div>
     <div class="metric"><span>Telegram</span><strong id="telegram">—</strong></div>
     <div class="metric"><span>Kênh đang bật</span><strong id="enabled">—</strong></div>
+    <div class="metric"><span>Silence Engine</span><button id="engine-toggle">—</button><small id="engine-waiting">Đang chờ: —</small></div>
   </section>
   <nav class="tabs" id="team-tabs"><button data-tab="notify">Notify Channels</button></nav>
   <section class="tab-pane" id="silence-tab">
@@ -125,6 +129,7 @@
   let teamMembers = [];
   let activeOwner = '';
   let notifyActive = false;
+  let processingControl = null;
   const formatTime = value => value ? new Date(value).toLocaleTimeString('vi-VN') : '—';
   const escapeText = value => String(value ?? '—');
 
@@ -216,8 +221,9 @@
 
   async function refresh() {
     try {
-      const [status, members, channels, notifyChannels, jobs] = await Promise.all([request('/api/status'), request('/api/team-members'), request('/api/channels'), request('/api/notify-channels'), request('/api/jobs')]);
+      const [status, members, channels, notifyChannels, jobs, control] = await Promise.all([request('/api/status'), request('/api/team-members'), request('/api/channels'), request('/api/notify-channels'), request('/api/jobs'), request('/api/processing-control')]);
       teamMembers = members;
+      processingControl = control;
       if (!activeOwner) activeOwner = members[0].id;
       const tabs = document.querySelector('#team-tabs');
       tabs.replaceChildren(...members.map(member => { const button = document.createElement('button'); button.textContent = member.display_name; button.classList.toggle('active', !notifyActive && activeOwner === member.id); button.onclick = () => { activeOwner = member.id; notifyActive = false; refresh(); }; return button; }), (() => { const button = document.createElement('button'); button.textContent = 'Notify Channels'; button.classList.toggle('active', notifyActive); button.onclick = () => { notifyActive = true; refresh(); }; return button; })());
@@ -227,6 +233,10 @@
       document.querySelector('#ytdlp').textContent = status.ytdlp;
       document.querySelector('#telegram').textContent = status.telegram;
       document.querySelector('#enabled').textContent = status.enabled_channels;
+      const engine = document.querySelector('#engine-toggle');
+      engine.textContent = control.silence_engine_enabled ? `ON / ${control.qwen_status}` : control.qwen_status === 'STOPPING' ? 'Stopping after current job...' : control.qwen_status === 'ERROR' ? 'ERROR' : 'OFF';
+      engine.className = control.qwen_status === 'ERROR' ? 'engine-error' : control.silence_engine_enabled ? 'engine-on' : 'engine-off';
+      document.querySelector('#engine-waiting').textContent = `Đang chờ: ${control.waiting_jobs} video`;
       const ownedChannels = channels.filter(channel => channel.owner_id === activeOwner);
       const ownedJobs = jobs.filter(job => (job.owner_id || members[0].id) === activeOwner);
       list.replaceChildren(...(ownedChannels.length ? ownedChannels.map(channelCard) : [Object.assign(document.createElement('div'), {className:'empty', textContent:'Chưa có kênh nào.'})]));
@@ -238,6 +248,14 @@
   }
 
   function showNotice(message) { const notice = document.querySelector('#notice'); notice.textContent = message; notice.style.display = 'block'; setTimeout(() => notice.style.display = 'none', 2200); }
+  document.querySelector('#engine-toggle').onclick = async () => {
+    if (!processingControl) return;
+    const enable = !processingControl.silence_engine_enabled || processingControl.qwen_status === 'ERROR';
+    try {
+      processingControl = await request('/api/processing-control', {method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({silence_engine_enabled:enable})});
+      await refresh();
+    } catch (failure) { showNotice(failure.message); }
+  };
   function updateAddButton() { submitAdd.disabled = !(nameInput.value.trim() && resolvedId); }
   function resetResolver() { resolvedId = ''; idInput.value = ''; resolveStatus.textContent = ''; resolveStatus.className = 'resolve-status'; updateAddButton(); }
   async function resolveUrl(sequence) {

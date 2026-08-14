@@ -23,6 +23,8 @@ class Settings:
     channels_file: Path = ROOT / "config" / "channels.json"
     team_members_file: Path = ROOT / "config" / "team_members.json"
     state_db: Path = ROOT / "state" / "yt_notifi.db"
+    processing_control_file: Path = ROOT / "state" / "processing-control.json"
+    production_runtime_file: Path = ROOT / "state" / "production-runtime.json"
     enable_background_tasks: bool = True
     ytdlp_path: str = ""
     poll_interval_seconds: int = 10
@@ -34,6 +36,8 @@ class Settings:
     ytdownload_bridge_url: str = "http://127.0.0.1:8790"
     processing_work_root: Path | None = None
     silence_cutter_bridge_url: str = "http://127.0.0.1:8791"
+    silence_cutter_root: Path = ROOT.parent / "Silence_cutter"
+    qwen_ready_timeout_seconds: int = 120
     contentops_cleanup_dry_run: bool = True
 
     @classmethod
@@ -50,6 +54,12 @@ class Settings:
             channels_file=Path(os.getenv("CHANNELS_FILE", ROOT / "config" / "channels.json")),
             team_members_file=Path(os.getenv("TEAM_MEMBERS_FILE", ROOT / "config" / "team_members.json")),
             state_db=Path(os.getenv("STATE_DB", ROOT / "state" / "yt_notifi.db")),
+            processing_control_file=Path(os.getenv(
+                "PROCESSING_CONTROL_FILE", ROOT / "state" / "processing-control.json"
+            )),
+            production_runtime_file=Path(os.getenv(
+                "PRODUCTION_RUNTIME_FILE", ROOT / "state" / "production-runtime.json"
+            )),
             ytdlp_path=os.getenv("YTDLP_PATH", ""),
             poll_interval_seconds=max(1, int(os.getenv("POLL_INTERVAL_SECONDS", "10"))),
             poll_max_concurrency=max(1, int(os.getenv("POLL_MAX_CONCURRENCY", "3"))),
@@ -60,6 +70,8 @@ class Settings:
             ytdownload_bridge_url=os.getenv("YTDOWNLOAD_BRIDGE_URL", "http://127.0.0.1:8790").rstrip("/"),
             processing_work_root=Path(processing_work_root) if processing_work_root else None,
             silence_cutter_bridge_url=os.getenv("SILENCE_CUTTER_BRIDGE_URL", "http://127.0.0.1:8791").rstrip("/"),
+            silence_cutter_root=Path(os.getenv("SILENCE_CUTTER_ROOT", ROOT.parent / "Silence_cutter")),
+            qwen_ready_timeout_seconds=max(30, int(os.getenv("QWEN_READY_TIMEOUT_SECONDS", "120"))),
             contentops_cleanup_dry_run=os.getenv(
                 "CONTENTOPS_CLEANUP_DRY_RUN", "true"
             ).strip().lower() not in {"false", "0", "no"},

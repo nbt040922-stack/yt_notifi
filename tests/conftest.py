@@ -30,7 +30,10 @@ def settings(tmp_path: Path) -> Settings:
         channels_file=channels,
         team_members_file=team_members,
         state_db=tmp_path / "state.db",
+        processing_control_file=tmp_path / "processing-control.json",
+        production_runtime_file=tmp_path / "production-runtime.json",
         local_output_fallback_root=tmp_path / "fallback",
         local_fallback_min_free_gb=0,
+        silence_cutter_root=tmp_path / "Silence_cutter",
         enable_background_tasks=False,
     )

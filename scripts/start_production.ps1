@@ -10,6 +10,7 @@ $root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 
 $logs = Join-Path $root "logs"
 $runtimePath = Join-Path $root "state\production-runtime.json"
+$controlPath = Join-Path $root "state\processing-control.json"
 $launcherLog = Join-Path $logs "production-launcher.log"
 New-Item -ItemType Directory -Path $logs -Force | Out-Null
 $mutex = Enter-LauncherMutex "Local\CONTENTOPS_PRODUCTION_LAUNCHER"
@@ -43,6 +44,21 @@ function Save-ProductionRuntime {
     Write-RuntimeState $runtimePath $state
 }
 
+function Save-QwenControl([bool]$Enabled, [string]$Status, [Diagnostics.Process]$Process) {
+    $existing = Read-RuntimeState $controlPath
+    $state = [ordered]@{}
+    if ($existing) {
+        foreach ($property in $existing.PSObject.Properties) { $state[$property.Name] = $property.Value }
+    }
+    $state["silence_engine_enabled"] = $Enabled
+    $state["qwen_status"] = $Status
+    $state["qwen_pid"] = $(if ($Process) { $Process.Id } else { $null })
+    $state["qwen_started_at"] = $(if ($Process) { Get-ProcessStartUtc $Process } else { $null })
+    $state["error"] = $null
+    $state["off_requested_at"] = $null
+    Write-RuntimeState $controlPath $state
+}
+
 function Stop-ProductionChildren {
     if ($script:watcher) {
         Stop-OwnedProcessTree $script:watcher.Id (Get-ProcessStartUtc $script:watcher) "uvicorn app.main:app" | Out-Null
@@ -50,7 +66,10 @@ function Stop-ProductionChildren {
     if ($script:silence) {
         Stop-OwnedProcessTree $script:silence.Id (Get-ProcessStartUtc $script:silence) "contentops_process_bridge.py" | Out-Null
     }
-    if ($script:qwen_worker) {
+    $control = Read-RuntimeState $controlPath
+    if ($control -and $control.qwen_pid -and $control.qwen_started_at) {
+        Stop-OwnedProcessTree ([int]$control.qwen_pid) ([string]$control.qwen_started_at) "qwen_worker.supervisor" | Out-Null
+    } elseif ($script:qwen_worker) {
         Stop-OwnedProcessTree $script:qwen_worker.Id (Get-ProcessStartUtc $script:qwen_worker) "qwen_worker.supervisor" | Out-Null
     }
     if ($script:ytdownload) {
@@ -66,6 +85,8 @@ function Assert-Healthy([Diagnostics.Process]$Process, [string]$Name, [string]$U
 
 try {
     Import-DotEnv (Join-Path $root ".env")
+    $control = Read-RuntimeState $controlPath
+    $engineEnabled = $(if ($null -eq $control) { $true } else { [bool]$control.silence_engine_enabled })
     if ($StartupDelaySeconds) {
         Write-LauncherLog $launcherLog "startup delay seconds=$StartupDelaySeconds"
         Start-Sleep -Seconds $StartupDelaySeconds
@@ -80,23 +101,32 @@ try {
     foreach ($required in @($electron, $silencePython)) {
         if (-not (Test-Path -LiteralPath $required -PathType Leaf)) { throw "Runtime missing: $required" }
     }
-    if (-not $env:SEMANTIC_QWEN_MODEL) {
-        $env:SEMANTIC_QWEN_MODEL = Join-Path $silenceRoot "local_models\Qwen2.5-VL-7B-Instruct-AWQ"
-    }
-    if (-not (Test-Path -LiteralPath $env:SEMANTIC_QWEN_MODEL -PathType Container)) {
-        throw "Qwen model missing: $env:SEMANTIC_QWEN_MODEL"
+    if ($engineEnabled) {
+        if (-not $env:SEMANTIC_QWEN_MODEL) {
+            $env:SEMANTIC_QWEN_MODEL = Join-Path $silenceRoot "local_models\Qwen2.5-VL-7B-Instruct-AWQ"
+        }
+        if (-not (Test-Path -LiteralPath $env:SEMANTIC_QWEN_MODEL -PathType Container)) {
+            throw "Qwen model missing: $env:SEMANTIC_QWEN_MODEL"
+        }
     }
     Assert-YtDlp $root | Out-Null
 
-    if (Test-LocalPortListening 8792) { throw "Qwen Worker port 8792 is already in use" }
+    if ($engineEnabled -and (Test-LocalPortListening 8792)) { throw "Qwen Worker port 8792 is already in use" }
     if (Test-LocalPortListening 8790) { throw "YTDOWNLOAD port 8790 is already in use" }
     if (Test-LocalPortListening 8791) { throw "SILENCE CUTTER port 8791 is already in use" }
 
-    Write-LauncherLog $launcherLog "Starting Qwen Worker"
-    $qwen_worker = Start-Process -FilePath $silencePython -ArgumentList @("-m", "qwen_worker.supervisor") `
-        -WorkingDirectory $silenceRoot -WindowStyle Hidden -PassThru `
-        -RedirectStandardOutput (Join-Path $logs "qwen-worker.stdout.log") `
-        -RedirectStandardError (Join-Path $logs "qwen-worker.stderr.log")
+    if ($engineEnabled) {
+        Write-LauncherLog $launcherLog "Starting Qwen Worker"
+        $qwen_worker = Start-Process -FilePath $silencePython -ArgumentList @("-m", "qwen_worker.supervisor") `
+            -WorkingDirectory $silenceRoot -WindowStyle Hidden -PassThru `
+            -RedirectStandardOutput (Join-Path $logs "qwen-worker.stdout.log") `
+            -RedirectStandardError (Join-Path $logs "qwen-worker.stderr.log")
+        Save-QwenControl $true "STARTING" $qwen_worker
+    } else {
+        $qwenHealth = "OFF"
+        Save-QwenControl $false "OFF" $null
+        Write-LauncherLog $launcherLog "Qwen disabled by processing control"
+    }
     $env:CONTENTOPS_HEADLESS = "1"
     $ytdownload = Start-Process -FilePath $electron -ArgumentList @(".") -WorkingDirectory $ytdownloadRoot `
         -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $logs "ytdownload.stdout.log") `
@@ -107,17 +137,21 @@ try {
         -RedirectStandardError (Join-Path $logs "silence.stderr.log")
     Save-ProductionRuntime
 
-    $qwenResult = Wait-QwenReady $qwen_worker.Id $QwenTimeoutSeconds `
-        -OnState {
-            param($state, $health)
-            $script:qwenHealth = $state
-            Save-ProductionRuntime
-            $detail = if ($state -eq "ERROR" -and $health.error) { " error=$($health.error)" } else { "" }
-            Write-LauncherLog $launcherLog "Qwen: $state$detail"
-        }
-    if ($qwenResult -ne "READY") { throw "Qwen Worker startup failed: $qwenResult" }
-    $qwenHealth = "READY"
-    Save-ProductionRuntime
+    if ($engineEnabled) {
+        $qwenResult = Wait-QwenReady $qwen_worker.Id $QwenTimeoutSeconds `
+            -OnState {
+                param($state, $health)
+                $script:qwenHealth = $state
+                Save-ProductionRuntime
+                Save-QwenControl $true $state $script:qwen_worker
+                $detail = if ($state -eq "ERROR" -and $health.error) { " error=$($health.error)" } else { "" }
+                Write-LauncherLog $launcherLog "Qwen: $state$detail"
+            }
+        if ($qwenResult -ne "READY") { throw "Qwen Worker startup failed: $qwenResult" }
+        $qwenHealth = "READY"
+        Save-QwenControl $true "READY" $qwen_worker
+        Save-ProductionRuntime
+    }
     Assert-Healthy $ytdownload "YTDOWNLOAD" "http://127.0.0.1:8790/health"
     Assert-Healthy $silence "SILENCE CUTTER" "http://127.0.0.1:8791/health"
 
@@ -140,7 +174,7 @@ try {
 
     while ($true) {
         Start-Sleep -Seconds 2
-        foreach ($service in @($ytdownload, $qwen_worker, $silence, $watcher)) {
+        foreach ($service in @($ytdownload, $silence, $watcher)) {
             if ($service.HasExited) { throw "Owned service exited pid=$($service.Id)" }
         }
     }

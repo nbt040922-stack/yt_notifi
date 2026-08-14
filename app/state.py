@@ -338,6 +338,30 @@ class StateStore:
                  process_error, utc_now(), attempts, next_attempt_at, job_id),
             )
 
+    def pause_process_job(self, job_id: int, reason: str) -> None:
+        with self._connect() as db:
+            db.execute(
+                """UPDATE processing_jobs SET status='PROCESS_PENDING', process_error=?,
+                   next_process_attempt_at=NULL, updated_at=? WHERE id=?""",
+                (reason, utc_now(), job_id),
+            )
+
+    def active_process_job_count(self) -> int:
+        with self._connect() as db:
+            return int(db.execute(
+                """SELECT COUNT(*) FROM processing_jobs
+                   WHERE process_external_id IS NOT NULL
+                     AND status IN ('PROCESS_PENDING','PROCESSING')"""
+            ).fetchone()[0])
+
+    def waiting_process_job_count(self) -> int:
+        with self._connect() as db:
+            return int(db.execute(
+                """SELECT COUNT(*) FROM processing_jobs
+                   WHERE process_external_id IS NULL
+                     AND status IN ('DOWNLOADED','PROCESS_PENDING')"""
+            ).fetchone()[0])
+
     def set_processing_route(self, job_id: int, path: str, nas_sync_state: str) -> None:
         with self._connect() as db:
             db.execute(

@@ -233,12 +233,23 @@ def test_production_duplicate_guard_and_failure_cleanup():
     assert script.index("Stop-ProductionChildren", final) > final
 
 
+def test_production_launcher_honors_persisted_engine_off():
+    script = (ROOT / "scripts" / "start_production.ps1").read_text(encoding="utf-8")
+    assert 'state\\processing-control.json' in script
+    assert '$engineEnabled = $(if ($null -eq $control) { $true }' in script
+    assert 'if ($engineEnabled) {' in script
+    monitor = script[script.index("while ($true)"):]
+    assert '@($ytdownload, $silence, $watcher)' in monitor
+    assert '@($ytdownload, $qwen_worker, $silence, $watcher)' not in monitor
+
+
 def test_stop_order_and_owned_process_validation():
     script = (ROOT / "scripts" / "stop_production.ps1").read_text(encoding="utf-8")
     assert script.index('"watcher"') < script.index('"silence"') < script.index('"ytdownload"')
     assert '"qwen_worker", "qwen_worker.supervisor"' in script
     assert "Stop-OwnedProcessTree" in script and "production-runtime.json" in script
-    assert 'PSObject.Properties["${name}_pid"]' in script
+    assert 'PSObject.Properties[$pidName]' in script
+    assert 'processing-control.json' in script and '"qwen_pid"' in script
 
 
 def test_qwen_runtime_status_and_firewall_boundary():

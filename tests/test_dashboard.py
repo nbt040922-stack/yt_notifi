@@ -31,6 +31,21 @@ def api(settings):
     return TestClient(create_app(settings, state=state)), state
 
 
+class ProcessingControlStub:
+    def __init__(self):
+        self.enabled = True
+
+    def snapshot(self):
+        return {
+            "silence_engine_enabled": self.enabled, "qwen_status": "READY" if self.enabled else "OFF",
+            "error": None, "waiting_jobs": 2,
+        }
+
+    def request(self, enabled):
+        self.enabled = enabled
+        return self.snapshot()
+
+
 def test_dashboard_loads(settings):
     response = TestClient(create_app(settings)).get("/")
     assert response.status_code == 200
@@ -43,6 +58,20 @@ def test_dashboard_accepts_lan_host_header(settings):
         "/", headers={"host": "192.168.1.31:8787"}
     )
     assert response.status_code == 200 and "YT_NOTIFI" in response.text
+
+
+def test_dashboard_processing_control_api(settings):
+    control = ProcessingControlStub()
+    client = TestClient(create_app(settings, processing_control=control))
+    assert client.get("/api/processing-control").json() == control.snapshot()
+    disabled = client.patch(
+        "/api/processing-control", json={"silence_engine_enabled": False}
+    )
+    assert disabled.status_code == 200
+    assert disabled.json()["silence_engine_enabled"] is False
+    assert client.patch(
+        "/api/processing-control", json={"silence_engine_enabled": "false"}
+    ).status_code == 400
 
 
 def test_get_channels_includes_runtime_state(settings):
