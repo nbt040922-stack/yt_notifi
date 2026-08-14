@@ -45,9 +45,6 @@
     input, textarea, select { width: 100%; border: 1px solid #344057; border-radius: 8px; background: #0b0f17; color: #fff; padding: 11px; }
     textarea { min-height: 170px; resize: vertical; }
     .tabs { display: flex; gap: 8px; margin: 28px 0 8px; }
-    .member-tab { display: inline-flex; gap: 3px; }
-    .member-tab button:first-child { border-radius: 8px 3px 3px 8px; }
-    .member-tab .edit-member { border-radius: 3px 8px 8px 3px; padding-inline: 9px; color: #aeb8c7; }
     .tabs button.active { background: #3b6df6; border-color: #3b6df6; }
     .tab-pane[hidden] { display: none; }
     .bulk { border: 1px solid #293142; border-radius: 12px; padding: 20px; background: #111620dd; }
@@ -56,7 +53,7 @@
     button:disabled { cursor: not-allowed; opacity: .45; }
     .resolve-status { min-height: 18px; margin-top: 7px; color: #9eabbd; font-size: 12px; }
     .resolve-status.success { color: #42d392; }
-    .job { display: grid; grid-template-columns: 1fr 1.2fr .7fr .8fr .8fr 1.4fr .6fr; gap: 12px; padding: 14px; border-bottom: 1px solid #252d3c; align-items: center; }
+    .job { display: grid; grid-template-columns: 1fr 1.2fr .7fr .8fr .8fr 1fr 1.4fr .6fr; gap: 12px; padding: 14px; border-bottom: 1px solid #252d3c; align-items: center; }
     .job:first-child { border-top: 1px solid #252d3c; }
     .job span { overflow-wrap: anywhere; font-size: 13px; }
     .job .muted { color: #8f9bad; }
@@ -110,17 +107,6 @@
     <div class="actions"><button type="button" id="cancel-add">Hủy</button><button class="primary" id="submit-add" type="submit" disabled>Thêm kênh</button></div>
   </form>
 </dialog>
-<dialog id="member-dialog">
-  <form id="member-form">
-    <h3>Sửa thành viên</h3>
-    <label for="member-name">Tên thành viên</label>
-    <input id="member-name" required maxlength="50">
-    <label for="member-folder">Thư mục NAS</label>
-    <input id="member-folder" required maxlength="80">
-    <div class="form-error" id="member-error"></div>
-    <div class="actions"><button type="button" id="cancel-member">Hủy</button><button class="primary" type="submit">Lưu</button></div>
-  </form>
-</dialog>
 <div class="notice" id="notice"></div>
 
 <script>
@@ -133,10 +119,6 @@
   const idInput = document.querySelector('#channel-id');
   const resolveStatus = document.querySelector('#resolve-status');
   const submitAdd = document.querySelector('#submit-add');
-  const memberDialog = document.querySelector('#member-dialog');
-  const memberName = document.querySelector('#member-name');
-  const memberFolder = document.querySelector('#member-folder');
-  let editingMemberId = '';
   let resolvedId = '';
   let resolveTimer;
   let resolveSequence = 0;
@@ -176,14 +158,11 @@
     const status = document.createElement('span'); status.textContent = channel.status;
     badge.append(dot, status); info.append(title, id, badge);
     const actions = document.createElement('div'); actions.className = 'actions';
-    const move = document.createElement('select'); move.setAttribute('aria-label', `Chuyển ${channel.name}`);
-    for (const member of teamMembers) { const option = document.createElement('option'); option.value = member.id; option.textContent = member.display_name; option.selected = member.id === channel.owner_id; move.append(option); }
-    move.onchange = async () => { await request(`/api/channels/${channel.channel_id}`, {method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({owner_id:move.value})}); activeOwner = move.value; await refresh(); };
     const toggle = document.createElement('button'); toggle.textContent = channel.enabled ? 'Tắt' : 'Bật';
     toggle.onclick = async () => { await request(`/api/channels/${channel.channel_id}`, {method: 'PATCH', headers: {'Content-Type':'application/json'}, body: JSON.stringify({enabled: !channel.enabled})}); await refresh(); };
     const remove = document.createElement('button'); remove.className = 'danger'; remove.textContent = 'Xóa';
     remove.onclick = async () => { if (confirm('Xóa kênh khỏi danh sách theo dõi? Lịch sử phát hiện vẫn được giữ.')) { await request(`/api/channels/${channel.channel_id}`, {method: 'DELETE'}); showNotice('Đã xóa kênh.'); await refresh(); } };
-    actions.append(move, toggle, remove); row.append(info, actions);
+    actions.append(toggle, remove); row.append(info, actions);
     const details = document.createElement('div'); details.className = 'details';
     details.append(detail('Poll gần nhất', formatTime(channel.last_poll_at)), detail('Thành công gần nhất', formatTime(channel.last_success_at)), detail('Video gần nhất', channel.latest_seen_video_id), detail('Số lỗi', channel.failures));
     card.append(row, details); return card;
@@ -222,23 +201,17 @@
     download.textContent = job.download_state ? `${job.download_state}${job.download_progress ? ` ${Math.round(job.download_progress)}%` : ''}` : '—';
     const processing = document.createElement('span'); processing.className = 'muted';
     processing.textContent = job.process_state ? `${job.process_state}${job.process_progress ? ` ${Math.round(job.process_progress)}%` : ''}` : '—';
-    const output = document.createElement('span'); output.className = 'muted'; output.textContent = job.output_dir || '—';
+    const nasLabels = {NOT_REQUIRED:'DIRECT', PENDING:job.process_state === 'DONE' ? 'PENDING SYNC' : 'LOCAL FALLBACK', SYNCING:'SYNCING', FAILED_RETRY:'RETRYING', DONE:'SYNCED', CONFLICT:'CONFLICT'};
+    const nas = document.createElement('div'); nas.className = job.nas_sync_state === 'CONFLICT' ? 'failed' : 'muted';
+    nas.textContent = `NAS: ${nasLabels[job.nas_sync_state] || '—'}`;
+    if (job.status === 'COMPLETED' && ['PENDING','FAILED_RETRY'].includes(job.nas_sync_state)) {
+      const retry = document.createElement('button'); retry.textContent = 'Retry NAS Sync';
+      retry.onclick = async () => { await request(`/api/jobs/${job.id}/retry-nas-sync`, {method:'POST'}); await refresh(); };
+      nas.append(document.createElement('br'), retry);
+    }
+    const output = document.createElement('span'); output.className = 'muted'; output.textContent = job.processing_output_dir || job.output_dir || '—';
     const created = document.createElement('span'); created.className = 'muted'; created.textContent = formatTime(job.created_at);
-    row.append(channel, video, status, download, processing, output, created); return row;
-  }
-
-  function memberTab(member) {
-    const group = document.createElement('span'); group.className = 'member-tab';
-    const tab = document.createElement('button'); tab.textContent = member.display_name;
-    tab.classList.toggle('active', !notifyActive && activeOwner === member.id);
-    tab.onclick = () => { activeOwner = member.id; notifyActive = false; refresh(); };
-    const edit = document.createElement('button'); edit.className = 'edit-member'; edit.textContent = 'Sửa';
-    edit.setAttribute('aria-label', `Sửa ${member.display_name}`);
-    edit.onclick = () => {
-      editingMemberId = member.id; memberName.value = member.display_name; memberFolder.value = member.nas_folder;
-      document.querySelector('#member-error').textContent = ''; memberDialog.showModal();
-    };
-    group.append(tab, edit); return group;
+    row.append(channel, video, status, download, processing, nas, output, created); return row;
   }
 
   async function refresh() {
@@ -247,7 +220,7 @@
       teamMembers = members;
       if (!activeOwner) activeOwner = members[0].id;
       const tabs = document.querySelector('#team-tabs');
-      tabs.replaceChildren(...members.map(memberTab), (() => { const button = document.createElement('button'); button.textContent = 'Notify Channels'; button.classList.toggle('active', notifyActive); button.onclick = () => { notifyActive = true; refresh(); }; return button; })());
+      tabs.replaceChildren(...members.map(member => { const button = document.createElement('button'); button.textContent = member.display_name; button.classList.toggle('active', !notifyActive && activeOwner === member.id); button.onclick = () => { activeOwner = member.id; notifyActive = false; refresh(); }; return button; }), (() => { const button = document.createElement('button'); button.textContent = 'Notify Channels'; button.classList.toggle('active', notifyActive); button.onclick = () => { notifyActive = true; refresh(); }; return button; })());
       document.querySelector('#silence-tab').hidden = notifyActive;
       document.querySelector('#notify-tab').hidden = !notifyActive;
       document.querySelector('#interval').textContent = `${status.poll_interval_seconds}s`;
@@ -293,15 +266,6 @@
   };
   document.querySelector('#open-add').onclick = () => { document.querySelector('#add-form').reset(); resetResolver(); dialog.showModal(); };
   document.querySelector('#cancel-add').onclick = () => { clearTimeout(resolveTimer); resolveSequence += 1; dialog.close(); };
-  document.querySelector('#cancel-member').onclick = () => memberDialog.close();
-  document.querySelector('#member-form').onsubmit = async event => {
-    event.preventDefault();
-    const error = document.querySelector('#member-error'); error.textContent = '';
-    try {
-      await request(`/api/team-members/${editingMemberId}`, {method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({display_name:memberName.value.trim(), nas_folder:memberFolder.value.trim()})});
-      memberDialog.close(); showNotice('Đã cập nhật thành viên.'); await refresh();
-    } catch (failure) { error.textContent = failure.message; }
-  };
   document.querySelector('#add-form').onsubmit = async event => {
     event.preventDefault();
     const error = document.querySelector('#form-error'); error.textContent = '';

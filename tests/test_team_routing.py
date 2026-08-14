@@ -58,7 +58,7 @@ def test_legacy_channel_defaults_to_first_owner_and_persists_on_update(settings)
     assert json.loads(settings.channels_file.read_text(encoding="utf-8"))[0]["owner_id"] == members[1].id
 
 
-def test_channel_api_adds_filters_moves_and_rejects_invalid_owner(settings):
+def test_channel_api_adds_filters_and_rejects_owner_changes(settings):
     members = load_team_members(settings.team_members_file)
     client = TestClient(create_app(settings))
     ids = ["UC" + f"{index:022d}" for index in range(10, 14)]
@@ -69,10 +69,9 @@ def test_channel_api_adds_filters_moves_and_rejects_invalid_owner(settings):
         assert response.status_code == 201 and response.json()["owner_id"] == member.id
     rows = client.get("/api/channels").json()
     assert all(sum(row["owner_id"] == member.id for row in rows) >= 1 for member in members)
-    moved = client.patch(f"/api/channels/{ids[0]}", json={"owner_id": members[3].id})
-    assert moved.json()["owner_id"] == members[3].id
-    invalid = client.patch(f"/api/channels/{ids[0]}", json={"owner_id": "unknown"})
-    assert invalid.status_code == 400 and invalid.json()["error"] == "INVALID_OWNER_ID"
+    owner_change = client.patch(f"/api/channels/{ids[0]}", json={"owner_id": members[3].id})
+    assert owner_change.status_code == 400
+    assert client.get("/api/channels").json()[1]["owner_id"] == members[0].id
 
 
 def test_notify_channels_remain_owner_free(settings):
@@ -124,7 +123,7 @@ def test_channel_move_and_restart_do_not_mutate_existing_snapshot(settings, tmp_
     assert Path(jobs["abcdefghijk"]["output_dir"]).parts[-2] == members[3].nas_folder
 
 
-def test_missing_owner_or_member_folder_fails_without_local_fallback(settings, tmp_path):
+def test_missing_owner_fails_but_missing_member_folder_queues_for_fallback(settings, tmp_path):
     members = load_team_members(settings.team_members_file)
     root = tmp_path / "nas"
     root.mkdir()
@@ -136,5 +135,5 @@ def test_missing_owner_or_member_folder_fails_without_local_fallback(settings, t
         "FAILED", "OWNER_CONFIG_MISSING", "",
     )
     assert (jobs["abcdefghijk"]["status"], jobs["abcdefghijk"]["error"], jobs["abcdefghijk"]["output_dir"]) == (
-        "FAILED", "NAS_UNAVAILABLE", str(root / members[0].nas_folder / "Channel"),
+        "QUEUED", None, str(root / members[0].nas_folder / "Channel"),
     )

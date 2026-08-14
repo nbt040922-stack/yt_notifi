@@ -1,22 +1,22 @@
 [
   {
     "id": "member_1",
-    "display_name": "Member 1",
-    "nas_folder": "Member_1"
+    "display_name": "Nam",
+    "nas_folder": "Nam"
   },
   {
     "id": "member_2",
-    "display_name": "Member 2",
-    "nas_folder": "Member_2"
+    "display_name": "Dũng",
+    "nas_folder": "Dũng"
   },
   {
     "id": "member_3",
-    "display_name": "Member 3",
-    "nas_folder": "Member_3"
+    "display_name": "Xuân Anh",
+    "nas_folder": "Xuân Anh"
   },
   {
     "id": "member_4",
-    "display_name": "Member 4",
-    "nas_folder": "Member_4"
+    "display_name": "Nhật",
+    "nas_folder": "Nhật"
   }
 ]

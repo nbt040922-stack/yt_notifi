@@ -30,5 +30,7 @@ def settings(tmp_path: Path) -> Settings:
         channels_file=channels,
         team_members_file=team_members,
         state_db=tmp_path / "state.db",
+        local_output_fallback_root=tmp_path / "fallback",
+        local_fallback_min_free_gb=0,
         enable_background_tasks=False,
     )

@@ -34,16 +34,15 @@ def create_processing_job(
     member_root = nas_output_root / member.nas_folder if nas_output_root and member else None
     output_dir = member_root / sanitize_folder_name(channel_name) if member_root else None
     status, error = "QUEUED", None
-    try:
-        if not member:
-            raise ValueError("OWNER_CONFIG_MISSING")
-        if not nas_output_root or not nas_output_root.is_dir() or not member_root.is_dir():
-            raise OSError("NAS root unavailable")
-        output_dir.mkdir(exist_ok=True)
-    except ValueError:
+    if not member:
         status, error = "FAILED", "OWNER_CONFIG_MISSING"
-    except OSError:
+    elif not output_dir:
         status, error = "FAILED", "NAS_UNAVAILABLE"
+    elif member_root.is_dir():
+        try:
+            output_dir.mkdir(exist_ok=True)
+        except OSError:
+            pass
 
     created = state.create_processing_job(
         event=event,

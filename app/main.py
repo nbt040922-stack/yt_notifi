@@ -13,9 +13,10 @@ from pydantic import BaseModel, ConfigDict, Field
 from .channel_store import ChannelStore, ChannelStoreError
 from .channel_resolver import ChannelResolveError, ResolvedChannel, resolve_channel
 from .cleanup_worker import CleanupWorker
-from .config import Channel, Settings, load_team_members, update_team_member
+from .config import Channel, Settings, load_team_members
 from .detector import resume_notifications
 from .download_worker import DownloadHandoffWorker
+from .nas_sync_worker import NasSyncWorker
 from .poller import ChannelPoller
 from .process_worker import ProcessHandoffWorker
 from .state import StateStore
@@ -38,14 +39,6 @@ class ChannelUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     enabled: bool | None = None
-    owner_id: str | None = None
-
-
-class TeamMemberUpdate(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    display_name: str | None = Field(default=None, max_length=50)
-    nas_folder: str | None = Field(default=None, max_length=80)
 
 
 class ChannelResolve(BaseModel):
@@ -116,6 +109,7 @@ def create_app(
     )
     download_worker = DownloadHandoffWorker(settings, state)
     process_worker = ProcessHandoffWorker(settings, state)
+    nas_sync_worker = NasSyncWorker(settings, state)
     cleanup_worker = CleanupWorker(settings, state)
 
     async def notification_retry_loop() -> None:
@@ -137,6 +131,7 @@ def create_app(
                 asyncio.create_task(poller.run(stop)),
                 asyncio.create_task(download_worker.run(stop)),
                 asyncio.create_task(process_worker.run(stop)),
+                asyncio.create_task(nas_sync_worker.run(stop)),
                 asyncio.create_task(cleanup_worker.run(stop)),
             ]
             if settings.enable_background_tasks else []
@@ -227,29 +222,18 @@ def create_app(
     def api_team_members() -> list[dict]:
         return [member.__dict__ for member in team_members]
 
-    @app.patch("/api/team-members/{member_id}")
-    def update_member(member_id: str, payload: TeamMemberUpdate) -> dict:
-        if payload.display_name is None and payload.nas_folder is None:
-            raise ChannelStoreError("INVALID_REQUEST", "Không có thay đổi.")
-        try:
-            updated = update_team_member(
-                settings.team_members_file, member_id, payload.display_name, payload.nas_folder,
-            )
-        except KeyError:
-            raise ChannelStoreError("MEMBER_NOT_FOUND", "Không tìm thấy thành viên.", 404)
-        except ValueError as exc:
-            raise ChannelStoreError("INVALID_TEAM_MEMBER", str(exc))
-        except OSError as exc:
-            logging.getLogger("yt_notifi").error(
-                "TEAM_MEMBER_CONFIG_WRITE_FAILED error_type=%s", type(exc).__name__
-            )
-            raise ChannelStoreError("CONFIG_WRITE_FAILED", "Không thể lưu cấu hình thành viên.", 500)
-        team_members[:] = updated
-        return next(member.__dict__ for member in team_members if member.id == member_id)
-
     @app.get("/api/jobs")
     def api_jobs() -> list[dict]:
         return [dict(job) for job in state.processing_jobs()]
+
+    @app.post("/api/jobs/{job_id}/retry-nas-sync")
+    def retry_nas_sync(job_id: int) -> dict[str, str]:
+        job = state.processing_job(job_id)
+        if not job:
+            return JSONResponse({"error": "JOB_NOT_FOUND", "message": "Không tìm thấy job."}, status_code=404)
+        if not state.retry_nas_sync(job_id):
+            return JSONResponse({"error": "NAS_SYNC_NOT_RETRYABLE", "message": "Job chưa cần đồng bộ lại."}, status_code=409)
+        return {"status": "scheduled"}
 
     @app.get("/api/notify-channels")
     def api_notify_channels() -> list[dict]:
@@ -374,9 +358,9 @@ def create_app(
 
     @app.patch("/api/channels/{channel_id}")
     def update_channel(channel_id: str, payload: ChannelUpdate) -> dict:
-        if payload.enabled is None and payload.owner_id is None:
+        if payload.enabled is None:
             raise ChannelStoreError("INVALID_REQUEST", "Không có thay đổi.")
-        channel, changed_to_enabled = channel_store.update(channel_id, payload.enabled, payload.owner_id)
+        channel, changed_to_enabled = channel_store.update(channel_id, payload.enabled)
         if changed_to_enabled:
             state.reset_poll_baseline(channel.channel_id)
         return channel_payload(channel)

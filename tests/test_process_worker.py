@@ -50,8 +50,10 @@ def downloaded_job(settings, tmp_path):
     source = tmp_path / "source.mp4"
     source.write_bytes(b"video")
     event = VideoEvent(VIDEO_ID, CHANNEL_ID, "Video", "", "", f"https://www.youtube.com/watch?v={VIDEO_ID}")
+    output_dir = tmp_path / "Member_2" / "JOIN Name"
+    output_dir.mkdir(parents=True)
     assert state.create_processing_job(
-        event, "JOIN Name", str(tmp_path / "Member_2" / "JOIN Name"), "QUEUED", None,
+        event, "JOIN Name", str(output_dir), "QUEUED", None,
         owner_id="member_2",
     )
     job = state.processing_jobs()[0]

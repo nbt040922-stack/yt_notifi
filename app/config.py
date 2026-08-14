@@ -29,6 +29,8 @@ class Settings:
     poll_max_concurrency: int = 3
     notify_resolve_concurrency: int = 6
     nas_output_root: Path | None = None
+    local_output_fallback_root: Path = Path(r"F:\ContentOpsFallback")
+    local_fallback_min_free_gb: float = 20
     ytdownload_bridge_url: str = "http://127.0.0.1:8790"
     processing_work_root: Path | None = None
     silence_cutter_bridge_url: str = "http://127.0.0.1:8791"
@@ -39,6 +41,7 @@ class Settings:
         load_dotenv(ROOT / ".env")
         nas_output_root = os.getenv("NAS_OUTPUT_ROOT", "").strip()
         processing_work_root = os.getenv("PROCESSING_WORK_ROOT", "").strip()
+        fallback_root = os.getenv("LOCAL_OUTPUT_FALLBACK_ROOT", "").strip() or r"F:\ContentOpsFallback"
         return cls(
             telegram_bot_token=os.getenv("TELEGRAM_BOT_TOKEN", ""),
             telegram_chat_id=os.getenv("TELEGRAM_CHAT_ID", ""),
@@ -52,6 +55,8 @@ class Settings:
             poll_max_concurrency=max(1, int(os.getenv("POLL_MAX_CONCURRENCY", "3"))),
             notify_resolve_concurrency=max(1, min(12, int(os.getenv("NOTIFY_RESOLVE_CONCURRENCY", "6")))),
             nas_output_root=Path(nas_output_root) if nas_output_root else None,
+            local_output_fallback_root=Path(fallback_root),
+            local_fallback_min_free_gb=max(0, float(os.getenv("LOCAL_FALLBACK_MIN_FREE_GB", "20"))),
             ytdownload_bridge_url=os.getenv("YTDOWNLOAD_BRIDGE_URL", "http://127.0.0.1:8790").rstrip("/"),
             processing_work_root=Path(processing_work_root) if processing_work_root else None,
             silence_cutter_bridge_url=os.getenv("SILENCE_CUTTER_BRIDGE_URL", "http://127.0.0.1:8791").rstrip("/"),
@@ -106,40 +111,6 @@ def _validate_team_members(data: object) -> list[TeamMember]:
 
 def load_team_members(path: Path = ROOT / "config" / "team_members.json") -> list[TeamMember]:
     return _validate_team_members(json.loads(path.read_text(encoding="utf-8")))
-
-
-def update_team_member(
-    path: Path,
-    member_id: str,
-    display_name: str | None = None,
-    nas_folder: str | None = None,
-) -> list[TeamMember]:
-    members = load_team_members(path)
-    if member_id not in TEAM_MEMBER_IDS:
-        raise KeyError(member_id)
-    updated = [
-        TeamMember(
-            member.id,
-            display_name.strip() if member.id == member_id and display_name is not None else member.display_name,
-            nas_folder.strip() if member.id == member_id and nas_folder is not None else member.nas_folder,
-        )
-        for member in members
-    ]
-    payload = [member.__dict__ for member in updated]
-    _validate_team_members(payload)
-    temporary = path.with_name(path.name + ".tmp")
-    try:
-        with temporary.open("w", encoding="utf-8", newline="\n") as file:
-            json.dump(payload, file, ensure_ascii=False, indent=2)
-            file.write("\n")
-            file.flush()
-            os.fsync(file.fileno())
-        load_team_members(temporary)
-        os.replace(temporary, path)
-    finally:
-        if temporary.exists():
-            temporary.unlink()
-    return updated
 
 
 def load_channels(path: Path, owner_ids: set[str] | None = None, default_owner: str = "member_1") -> list[Channel]:

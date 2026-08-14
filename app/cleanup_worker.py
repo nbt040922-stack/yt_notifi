@@ -112,7 +112,7 @@ class CleanupWorker:
         root = self.settings.processing_work_root
         workspace = validate_workspace(
             root, (root / str(job["id"])) if root else Path("."), job["id"],
-            self.settings.nas_output_root, output_root,
+            self.settings.nas_output_root, self.settings.local_output_fallback_root, output_root,
         )
         if not workspace.is_dir():
             return self._retry(job, now, "FAILED", "WORKSPACE_MISSING", "CLEANUP_BLOCKED")

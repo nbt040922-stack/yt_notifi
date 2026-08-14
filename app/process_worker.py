@@ -10,6 +10,7 @@ from urllib.parse import urlsplit
 import httpx
 
 from .config import Settings
+from .nas_sync_worker import ensure_writable_directory, prepare_fallback
 from .state import StateStore
 
 
@@ -20,6 +21,7 @@ BACKOFF_SECONDS = (5, 10, 20, 30, 60)
 
 class ProcessHandoffWorker:
     def __init__(self, settings: Settings, state: StateStore, client=None):
+        self.settings = settings
         self.state = state
         self.client = client or httpx.Client(timeout=5)
         parsed = urlsplit(settings.silence_cutter_bridge_url)
@@ -45,13 +47,17 @@ class ProcessHandoffWorker:
         if external_id:
             response = self.client.get(f"{self.bridge_url}/api/process-jobs/{external_id}")
         else:
+            try:
+                processing_output_dir = self._processing_output_dir(job)
+            except RuntimeError as exc:
+                return self._pending(job, now, str(exc))
             response = self.client.post(
                 f"{self.bridge_url}/api/process-jobs",
                 json={
                     "handoff_id": str(job["id"]),
                     "source_file": job["downloaded_file_path"],
                     "channel_name": job["channel_name"],
-                    "output_dir": job["output_dir"],
+                    "output_dir": str(processing_output_dir),
                     "video_id": job["video_id"],
                     "video_title": job["video_title"],
                     "enhanced_content_selection": True,
@@ -66,6 +72,18 @@ class ProcessHandoffWorker:
                 error = f"BRIDGE_HTTP_{response.status_code}"
             return self._failed(job, error)
         self._apply(job, response.json())
+
+    def _processing_output_dir(self, job) -> Path:
+        existing = job["processing_output_dir"]
+        if existing:
+            return Path(existing)
+        intended = Path(job["intended_output_dir"] or job["output_dir"])
+        if ensure_writable_directory(intended):
+            self.state.set_processing_route(job["id"], str(intended), "NOT_REQUIRED")
+            return intended
+        fallback = prepare_fallback(self.settings, job)
+        self.state.set_processing_route(job["id"], str(fallback), "PENDING")
+        return fallback
 
     def _apply(self, job, payload: dict) -> None:
         process_state = str(payload.get("state") or "")

@@ -75,7 +75,7 @@ def test_missing_channel_folder_is_created_with_safe_name(settings, tmp_path):
     assert (member_root / "Test Channel").is_dir()
 
 
-def test_nas_unavailable_records_failed_job_but_telegram_still_sends(settings, tmp_path):
+def test_nas_unavailable_queues_job_and_telegram_still_sends(settings, tmp_path):
     state, telegram = StateStore(settings.state_db), notifier()
     missing = tmp_path / "missing"
     members = load_team_members(settings.team_members_file)
@@ -84,7 +84,8 @@ def test_nas_unavailable_records_failed_job_but_telegram_still_sends(settings, t
         owner_id=members[0].id, team_members=members,
     ) == "NEW"
     job = state.processing_jobs()[0]
-    assert (job["status"], job["error"]) == ("FAILED", "NAS_UNAVAILABLE")
+    assert (job["status"], job["error"]) == ("QUEUED", None)
+    assert job["intended_output_dir"] == str(missing / members[0].nas_folder / "Test")
     telegram.send_video.assert_called_once()
 
 
@@ -101,7 +102,7 @@ def test_nas_unavailable_does_not_crash_poller(settings, tmp_path):
     results = poller.poll_channel(Channel(CHANNEL_ID, "Test"))
 
     assert results[0][1] == "NEW"
-    assert state.processing_jobs()[0]["error"] == "NAS_UNAVAILABLE"
+    assert (state.processing_jobs()[0]["status"], state.processing_jobs()[0]["error"]) == ("QUEUED", None)
     telegram.send_video.assert_called_once()
 
 

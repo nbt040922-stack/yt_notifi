@@ -1,31 +1,15 @@
-# Báo cáo chỉnh sửa thành viên trên Dashboard
+# Báo cáo khóa chỉnh sửa thành viên trên Dashboard
 
-## Giao diện
+## Trạng thái cuối
 
-- Mỗi tab Silence có nút **Sửa** riêng.
-- Hộp thoại cho phép thay đổi độc lập tên hiển thị và tên thư mục NAS.
-- Lưu thành công sẽ đóng hộp thoại, tải lại danh sách thành viên và cập nhật ngay nhãn tab, tên chủ sở hữu trên thẻ kênh/job.
-- Lỗi API được hiển thị trực tiếp trong hộp thoại.
+- Tên thành viên đã được cấu hình xong.
+- Nút **Sửa** và hộp thoại chỉnh sửa đã bị gỡ khỏi Dashboard.
+- API cập nhật thành viên đã bị gỡ; `PATCH /api/team-members/{member_id}` trả `404 Not Found`.
 - Giao diện Notify Channels không thay đổi.
 
-## API
+## Cấu hình
 
-`PATCH /api/team-members/{member_id}` nhận một hoặc cả hai trường:
-
-```json
-{
-  "display_name": "Nhan",
-  "nas_folder": "Nhan"
-}
-```
-
-- `display_name`: sau khi bỏ khoảng trắng phải dài 1–50 ký tự.
-- `nas_folder`: sau khi bỏ khoảng trắng phải dài 1–80 ký tự và là một thành phần thư mục an toàn; dấu phân cách, đường dẫn tuyệt đối, UNC và ổ đĩa đều bị từ chối.
-- Payload không chấp nhận `id`; `member_1` đến `member_4` là các ID cố định.
-
-## Lưu cấu hình
-
-`config/team_members.json` tiếp tục là nguồn dữ liệu duy nhất. Bản cập nhật được ghi vào tệp tạm cùng thư mục, đồng bộ xuống đĩa, đọc và kiểm tra lại đầy đủ bốn thành viên, rồi mới thay thế tệp chính bằng thao tác nguyên tử. Nếu ghi/thay thế thất bại, tệp chính không đổi và tệp tạm được dọn.
+`config/team_members.json` tiếp tục là nguồn dữ liệu duy nhất. Chỉ quản trị viên có quyền sửa tệp cục bộ mới có thể đổi tên hoặc thư mục NAS. `member_1` đến `member_4` vẫn là các ID cố định.
 
 ## Quyền sở hữu và định tuyến NAS
 
@@ -36,7 +20,6 @@
 
 ## Kiểm thử
 
-- Kiểm thử riêng cho chỉnh sửa thành viên và định tuyến: `23 passed`.
-- Toàn bộ bộ kiểm thử YT_NOTIFI: `160 passed, 1 warning`.
-- Tất cả kiểm thử dùng cấu hình, SQLite và cây NAS tạm; không gọi dashboard sản xuất.
-- Không dừng hoặc khởi động lại bất kỳ dịch vụ sản xuất nào.
+- Kiểm tra `GET /api/team-members` vẫn trả bốn thành viên.
+- Kiểm tra API `PATCH` không còn tồn tại.
+- Kiểm tra Dashboard không còn nút hoặc hộp thoại sửa thành viên.

@@ -12,7 +12,7 @@ Tên hiển thị và thư mục NAS có thể đổi tại một file mà khôn
 
 ## Dashboard và channel ownership
 
-Dashboard lấy danh sách thành viên từ `GET /api/team-members` và tạo động bốn tab Silence cùng tab Notify hiện hữu. Mỗi tab chỉ hiển thị channel và job của owner tương ứng. Add Channel gửi owner của tab hiện hành. Mỗi channel có dropdown Move; API PATCH cho phép thay đổi `owner_id` hoặc `enabled` và từ chối owner ngoài cấu hình.
+Dashboard lấy danh sách thành viên từ `GET /api/team-members` và tạo động bốn tab Silence cùng tab Notify hiện hữu. Mỗi tab chỉ hiển thị channel và job của owner tương ứng. Add Channel gửi owner của tab hiện hành. Quyền sở hữu không thể đổi từ Dashboard hoặc API; API PATCH chỉ cho phép bật/tắt kênh.
 
 Silence channels vẫn nằm trong `channels.json`; không chuyển sang SQLite. Record mới có `owner_id`. Record legacy thiếu owner được đọc bằng member đầu tiên và sẽ được persist chuẩn hóa ở lần mutation an toàn tiếp theo. Notify table/API/UI không có owner và không bị thay đổi.
 
@@ -40,7 +40,7 @@ Bốn member root đã được tạo trên NAS production:
 
 ## Move, restart và retry
 
-Move channel chỉ tác động video tương lai. Job cũ giữ nguyên `owner_id` và `output_dir`, kể cả sau restart, retry hoặc đổi `display_name`/`nas_folder`. Download Worker và Process Worker tiếp tục đọc `job.output_dir`; không tra owner live. Handoff giữ nguyên `handoff_id`, `enhanced_content_selection=true` và output snapshot qua mọi retry.
+Job giữ nguyên `owner_id` và `output_dir`, kể cả sau restart hoặc retry. Download Worker và Process Worker tiếp tục đọc `job.output_dir`; không tra owner live. Handoff giữ nguyên `handoff_id`, `enhanced_content_selection=true` và output snapshot qua mọi retry.
 
 Legacy job có `owner_id=NULL` vẫn giữ nguyên output path cũ, không bị âm thầm reroute. UI chỉ gán nhãn legacy job vào member đầu tiên để dễ quan sát.
 
@@ -59,7 +59,7 @@ Các path được lưu nguyên trong `processed_files_json`, phần đầu vào
 - Production được restart bằng Task Scheduler; YT_NOTIFI, YTDOWNLOAD, Silence Cutter và Qwen đều lên bình thường.
 - Trình duyệt thật hiển thị bốn tab Member 1–4 và Notify Channels.
 - Channel legacy xuất hiện dưới Member 1; Member 2 trống đúng filter.
-- Dropdown move có đủ bốn owner.
+- Không có điều khiển chuyển quyền sở hữu kênh.
 - Job legacy hiển thị owner nhưng vẫn giữ output path lịch sử.
 - Notify tab vẫn hiển thị đủ bulk form và 21 channel production, không mutation dữ liệu.
 - Controlled tests tạo job cho cả bốn owner và xác nhận exact member/channel output paths.
@@ -68,7 +68,7 @@ Các path được lưu nguyên trong `processed_files_json`, phần đầu vào
 
 - Toàn bộ YT_NOTIFI: 145 passed, 1 cảnh báo deprecation hiện hữu.
 - Silence Cutter bridge contract: 9 passed.
-- Team config, invalid owner, legacy normalization, add/filter/move/restart: đạt.
+- Team config, owner bất biến qua API, legacy normalization, add/filter/restart: đạt.
 - Snapshot owner/output, future-owner semantics, retry/idempotency và missing NAS: đạt.
 - Notify-only không owner, không processing, bulk/poller regression: đạt.
 - Python compile và `git diff --check`: đạt.

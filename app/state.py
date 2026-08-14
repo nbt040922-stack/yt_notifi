@@ -92,6 +92,14 @@ class StateStore:
                     channel_name TEXT NOT NULL,
                     owner_id TEXT,
                     output_dir TEXT NOT NULL,
+                    intended_output_dir TEXT,
+                    processing_output_dir TEXT,
+                    nas_sync_state TEXT,
+                    nas_sync_attempts INTEGER NOT NULL DEFAULT 0,
+                    nas_sync_error TEXT,
+                    nas_sync_next_attempt_at TEXT,
+                    nas_synced_at TEXT,
+                    fallback_cleanup_at TEXT,
                     error TEXT,
                     download_external_id TEXT,
                     download_state TEXT,
@@ -121,6 +129,14 @@ class StateStore:
             job_columns = {row[1] for row in db.execute("PRAGMA table_info(processing_jobs)")}
             job_additions = {
                 "owner_id": "TEXT",
+                "intended_output_dir": "TEXT",
+                "processing_output_dir": "TEXT",
+                "nas_sync_state": "TEXT",
+                "nas_sync_attempts": "INTEGER NOT NULL DEFAULT 0",
+                "nas_sync_error": "TEXT",
+                "nas_sync_next_attempt_at": "TEXT",
+                "nas_synced_at": "TEXT",
+                "fallback_cleanup_at": "TEXT",
                 "download_external_id": "TEXT",
                 "download_state": "TEXT",
                 "download_progress": "REAL NOT NULL DEFAULT 0",
@@ -149,6 +165,9 @@ class StateStore:
                 if name not in job_columns:
                     db.execute(f"ALTER TABLE processing_jobs ADD COLUMN {name} {sql_type}")
             db.execute("UPDATE processing_jobs SET updated_at=created_at WHERE updated_at IS NULL")
+            db.execute("UPDATE processing_jobs SET intended_output_dir=output_dir WHERE intended_output_dir IS NULL")
+            db.execute("UPDATE processing_jobs SET processing_output_dir=output_dir WHERE processing_output_dir IS NULL AND status IN ('COMPLETED','FAILED')")
+            db.execute("UPDATE processing_jobs SET nas_sync_state='NOT_REQUIRED' WHERE nas_sync_state IS NULL AND status IN ('COMPLETED','FAILED')")
 
     def record_event(self, event: VideoEvent, baseline: bool = False) -> bool:
         now = datetime.now(timezone.utc)
@@ -202,16 +221,20 @@ class StateStore:
             cursor = db.execute(
                 """INSERT OR IGNORE INTO processing_jobs
                    (created_at, status, video_id, video_url, video_title, source_channel_id,
-                    channel_name, owner_id, output_dir, error, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    channel_name, owner_id, output_dir, intended_output_dir, error, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (utc_now(), status, event.video_id, event.url, event.title, event.channel_id,
-                 channel_name, owner_id, output_dir, error, utc_now()),
+                 channel_name, owner_id, output_dir, output_dir, error, utc_now()),
             )
             return cursor.rowcount == 1
 
     def processing_jobs(self) -> list[sqlite3.Row]:
         with self._connect() as db:
             return list(db.execute("SELECT * FROM processing_jobs ORDER BY id DESC"))
+
+    def processing_job(self, job_id: int) -> sqlite3.Row | None:
+        with self._connect() as db:
+            return db.execute("SELECT * FROM processing_jobs WHERE id=?", (job_id,)).fetchone()
 
     def notify_channels(self, *, enabled_only: bool = False) -> list[sqlite3.Row]:
         query = "SELECT * FROM notify_channels"
@@ -315,11 +338,80 @@ class StateStore:
                  process_error, utc_now(), attempts, next_attempt_at, job_id),
             )
 
+    def set_processing_route(self, job_id: int, path: str, nas_sync_state: str) -> None:
+        with self._connect() as db:
+            db.execute(
+                """UPDATE processing_jobs SET processing_output_dir=?, nas_sync_state=?,
+                   nas_sync_error=NULL, updated_at=? WHERE id=?""",
+                (path, nas_sync_state, utc_now(), job_id),
+            )
+
+    def nas_sync_jobs_due(self, now: str) -> list[sqlite3.Row]:
+        with self._connect() as db:
+            return list(db.execute(
+                """SELECT * FROM processing_jobs
+                   WHERE status='COMPLETED' AND nas_sync_state IN ('PENDING','FAILED_RETRY','SYNCING')
+                     AND (nas_sync_next_attempt_at IS NULL OR nas_sync_next_attempt_at <= ?)
+                   ORDER BY id LIMIT 1""",
+                (now,),
+            ))
+
+    def update_nas_sync(
+        self,
+        job_id: int,
+        state: str,
+        *,
+        attempts: int | None = None,
+        error: str | None = None,
+        next_attempt_at: str | None = None,
+        synced_at: str | None = None,
+        processed_file_path: str | None = None,
+        processed_files_json: str | None = None,
+    ) -> None:
+        with self._connect() as db:
+            db.execute(
+                """UPDATE processing_jobs SET nas_sync_state=?,
+                   nas_sync_attempts=COALESCE(?, nas_sync_attempts), nas_sync_error=?,
+                   nas_sync_next_attempt_at=?, nas_synced_at=COALESCE(?, nas_synced_at),
+                   processed_file_path=COALESCE(?, processed_file_path),
+                   processed_files_json=COALESCE(?, processed_files_json), updated_at=?
+                   WHERE id=?""",
+                (state, attempts, error, next_attempt_at, synced_at, processed_file_path,
+                 processed_files_json, utc_now(), job_id),
+            )
+
+    def nas_fallback_cleanup_jobs(self) -> list[sqlite3.Row]:
+        with self._connect() as db:
+            return list(db.execute(
+                """SELECT * FROM processing_jobs
+                   WHERE nas_sync_state='DONE' AND fallback_cleanup_at IS NULL
+                     AND processing_output_dir IS NOT NULL
+                     AND processing_output_dir != intended_output_dir
+                   ORDER BY id"""
+            ))
+
+    def mark_fallback_cleaned(self, job_id: int, cleaned_at: str) -> None:
+        with self._connect() as db:
+            db.execute(
+                "UPDATE processing_jobs SET fallback_cleanup_at=?, updated_at=? WHERE id=?",
+                (cleaned_at, utc_now(), job_id),
+            )
+
+    def retry_nas_sync(self, job_id: int) -> bool:
+        with self._connect() as db:
+            return db.execute(
+                """UPDATE processing_jobs SET nas_sync_state='PENDING',
+                   nas_sync_error=NULL, nas_sync_next_attempt_at=NULL, updated_at=?
+                   WHERE id=? AND nas_sync_state IN ('PENDING','FAILED_RETRY')""",
+                (utc_now(), job_id),
+            ).rowcount == 1
+
     def cleanup_job_due(self, now: str) -> sqlite3.Row | None:
         with self._connect() as db:
             return db.execute(
                 """SELECT * FROM processing_jobs
                    WHERE status='COMPLETED' AND COALESCE(cleanup_state, '') != 'CLEANED'
+                     AND COALESCE(nas_sync_state, 'NOT_REQUIRED') IN ('DONE','NOT_REQUIRED')
                      AND (next_cleanup_attempt_at IS NULL OR next_cleanup_attempt_at <= ?)
                    ORDER BY id LIMIT 1""",
                 (now,),
