@@ -247,6 +247,45 @@ def create_app(
     def api_jobs() -> list[dict]:
         return [dict(job) for job in state.processing_jobs()]
 
+    @app.post("/api/jobs/{job_id}/cancel")
+    def cancel_job(job_id: int) -> dict:
+        result = state.cancel_processing_job(job_id)
+        if result == "JOB_NOT_FOUND":
+            return JSONResponse(
+                {"error": result, "message": "Không tìm thấy job."}, status_code=404,
+            )
+        if result == "JOB_NOT_CANCELLABLE":
+            return JSONResponse(
+                {"error": result, "message": "Job này không thể hủy."}, status_code=409,
+            )
+        logging.getLogger("yt_notifi").info("JOB_MANUAL_CANCEL job_id=%s", job_id)
+        return dict(state.processing_job(job_id))
+
+    @app.post("/api/jobs/{job_id}/retry")
+    def retry_job(job_id: int) -> dict:
+        job = state.processing_job(job_id)
+        source = Path(job["downloaded_file_path"]) if job and job["downloaded_file_path"] else None
+        try:
+            source_exists = bool(
+                job and job["download_state"] == "DONE" and source
+                and source.is_file() and source.stat().st_size > 0
+            )
+        except OSError:
+            source_exists = False
+        result = state.retry_processing_job(job_id, source_exists=source_exists)
+        errors = {
+            "JOB_NOT_FOUND": (404, "Không tìm thấy job."),
+            "JOB_NOT_RETRYABLE": (409, "Job này không thể thử lại."),
+            "JOB_ALREADY_RUNNING": (409, "Job đang chạy hoặc đã được xếp lại."),
+        }
+        if result in errors:
+            status_code, message = errors[result]
+            return JSONResponse({"error": result, "message": message}, status_code=status_code)
+        logging.getLogger("yt_notifi").info(
+            "JOB_MANUAL_RETRY job_id=%s resume=%s", job_id, result,
+        )
+        return dict(state.processing_job(job_id))
+
     @app.get("/api/processing-control")
     def get_processing_control() -> dict:
         return processing_control.snapshot()

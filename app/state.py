@@ -17,6 +17,11 @@ def parse_utc(value: str | None) -> datetime | None:
     return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(timezone.utc)
 
 
+def job_handoff_id(job) -> str:
+    attempt = int(job["manual_retry_count"] or 0)
+    return str(job["id"]) if not attempt else f"{job['id']}-retry-{attempt}"
+
+
 class StateStore:
     def __init__(self, path: Path):
         self.path = path
@@ -130,7 +135,12 @@ class StateStore:
                     source_deleted INTEGER NOT NULL DEFAULT 0,
                     cleanup_bytes_freed INTEGER,
                     cleanup_attempts INTEGER NOT NULL DEFAULT 0,
-                    next_cleanup_attempt_at TEXT
+                    next_cleanup_attempt_at TEXT,
+                    cancel_requested INTEGER NOT NULL DEFAULT 0,
+                    cancelled_at TEXT,
+                    cancel_reason TEXT,
+                    manual_retry_count INTEGER NOT NULL DEFAULT 0,
+                    last_manual_retry_at TEXT
                 )"""
             )
             job_columns = {row[1] for row in db.execute("PRAGMA table_info(processing_jobs)")}
@@ -167,6 +177,11 @@ class StateStore:
                 "cleanup_bytes_freed": "INTEGER",
                 "cleanup_attempts": "INTEGER NOT NULL DEFAULT 0",
                 "next_cleanup_attempt_at": "TEXT",
+                "cancel_requested": "INTEGER NOT NULL DEFAULT 0",
+                "cancelled_at": "TEXT",
+                "cancel_reason": "TEXT",
+                "manual_retry_count": "INTEGER NOT NULL DEFAULT 0",
+                "last_manual_retry_at": "TEXT",
             }
             for name, sql_type in job_additions.items():
                 if name not in job_columns:
@@ -243,6 +258,80 @@ class StateStore:
         with self._connect() as db:
             return db.execute("SELECT * FROM processing_jobs WHERE id=?", (job_id,)).fetchone()
 
+    def cancel_processing_job(self, job_id: int) -> str:
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            job = db.execute("SELECT status FROM processing_jobs WHERE id=?", (job_id,)).fetchone()
+            if not job:
+                return "JOB_NOT_FOUND"
+            if job["status"] == "CANCELLED":
+                return "CANCELLED"
+            if job["status"] in {"FAILED", "COMPLETED", "DONE"}:
+                return "JOB_NOT_CANCELLABLE"
+            now = utc_now()
+            db.execute(
+                """UPDATE processing_jobs SET status='CANCELLED', cancel_requested=1,
+                   cancelled_at=?, cancel_reason='USER_REQUEST', updated_at=?,
+                   next_download_attempt_at=NULL, next_process_attempt_at=NULL
+                   WHERE id=?""",
+                (now, now, job_id),
+            )
+            return "CANCELLED"
+
+    def retry_processing_job(self, job_id: int, *, source_exists: bool) -> str:
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            job = db.execute("SELECT * FROM processing_jobs WHERE id=?", (job_id,)).fetchone()
+            if not job:
+                return "JOB_NOT_FOUND"
+            if job["status"] not in {"FAILED", "CANCELLED"}:
+                if job["status"] == "COMPLETED" and job["nas_sync_state"] in {"FAILED_RETRY", "CONFLICT"}:
+                    now = utc_now()
+                    db.execute(
+                        """UPDATE processing_jobs SET nas_sync_state='PENDING', nas_sync_error=NULL,
+                           nas_sync_next_attempt_at=NULL, manual_retry_count=manual_retry_count+1,
+                           last_manual_retry_at=?, updated_at=? WHERE id=?""",
+                        (now, now, job_id),
+                    )
+                    return "NAS_PENDING"
+                if job["status"] == "COMPLETED" and job["nas_sync_state"] == "PENDING":
+                    return "JOB_ALREADY_RUNNING"
+                if job["status"] in {
+                    "QUEUED", "DOWNLOAD_PENDING", "DOWNLOADING", "DOWNLOADED",
+                    "PROCESS_PENDING", "PROCESSING",
+                }:
+                    return "JOB_ALREADY_RUNNING"
+                return "JOB_NOT_RETRYABLE"
+
+            now = utc_now()
+            common = """cancel_requested=0, cancelled_at=NULL, cancel_reason=NULL, error=NULL,
+                        manual_retry_count=manual_retry_count+1, last_manual_retry_at=?, updated_at=?"""
+            if source_exists:
+                db.execute(
+                    f"""UPDATE processing_jobs SET status='PROCESS_PENDING', {common},
+                        process_external_id=NULL, process_state=NULL, process_progress=0,
+                        processed_file_path=NULL, processed_files_json=NULL, process_error=NULL,
+                        next_process_attempt_at=NULL,
+                        cleanup_state=NULL, cleanup_error=NULL, cleanup_at=NULL,
+                        source_deleted=0, cleanup_bytes_freed=NULL,
+                        next_cleanup_attempt_at=NULL WHERE id=?""",
+                    (now, now, job_id),
+                )
+                return "PROCESS_PENDING"
+            db.execute(
+                f"""UPDATE processing_jobs SET status='QUEUED', {common},
+                    download_external_id=NULL, download_state=NULL, download_progress=0,
+                    downloaded_file_path=NULL, download_error=NULL,
+                    next_download_attempt_at=NULL, process_external_id=NULL, process_state=NULL,
+                    process_progress=0, processed_file_path=NULL, processed_files_json=NULL,
+                    process_error=NULL, next_process_attempt_at=NULL,
+                    cleanup_state=NULL, cleanup_error=NULL,
+                    cleanup_at=NULL, source_deleted=0, cleanup_bytes_freed=NULL,
+                    next_cleanup_attempt_at=NULL WHERE id=?""",
+                (now, now, job_id),
+            )
+            return "QUEUED"
+
     def notify_channels(self, *, enabled_only: bool = False) -> list[sqlite3.Row]:
         query = "SELECT * FROM notify_channels"
         if enabled_only:
@@ -293,6 +382,7 @@ class StateStore:
             return list(db.execute(
                 """SELECT * FROM processing_jobs
                    WHERE status IN ('QUEUED', 'DOWNLOAD_PENDING', 'DOWNLOADING')
+                     AND cancel_requested=0
                      AND (next_download_attempt_at IS NULL OR next_download_attempt_at <= ?)
                    ORDER BY id""",
                 (now,),
@@ -317,7 +407,7 @@ class StateStore:
                    download_external_id=COALESCE(?, download_external_id), download_state=?,
                    download_progress=?, downloaded_file_path=COALESCE(?, downloaded_file_path),
                    download_error=?, updated_at=?, download_attempts=?, next_download_attempt_at=?
-                   WHERE id=?""",
+                   WHERE id=? AND cancel_requested=0 AND status!='CANCELLED'""",
                 (status, external_id, download_state, progress, downloaded_file_path,
                  download_error, utc_now(), attempts, next_attempt_at, job_id),
             )
@@ -327,6 +417,7 @@ class StateStore:
             return list(db.execute(
                 """SELECT * FROM processing_jobs
                    WHERE status IN ('DOWNLOADED', 'PROCESS_PENDING', 'PROCESSING')
+                     AND cancel_requested=0
                      AND (next_process_attempt_at IS NULL OR next_process_attempt_at <= ?)
                    ORDER BY id""",
                 (now,),
@@ -353,7 +444,7 @@ class StateStore:
                    process_progress=?, processed_file_path=COALESCE(?, processed_file_path),
                    processed_files_json=COALESCE(?, processed_files_json),
                    process_error=?, updated_at=?, process_attempts=?, next_process_attempt_at=?
-                   WHERE id=?""",
+                   WHERE id=? AND cancel_requested=0 AND status!='CANCELLED'""",
                 (status, external_id, process_state, progress, processed_file_path, processed_files_json,
                  process_error, utc_now(), attempts, next_attempt_at, job_id),
             )
@@ -362,7 +453,8 @@ class StateStore:
         with self._connect() as db:
             db.execute(
                 """UPDATE processing_jobs SET status='PROCESS_PENDING', process_error=?,
-                   next_process_attempt_at=NULL, updated_at=? WHERE id=?""",
+                   next_process_attempt_at=NULL, updated_at=?
+                   WHERE id=? AND cancel_requested=0 AND status!='CANCELLED'""",
                 (reason, utc_now(), job_id),
             )
 
@@ -386,7 +478,8 @@ class StateStore:
         with self._connect() as db:
             db.execute(
                 """UPDATE processing_jobs SET processing_output_dir=?, nas_sync_state=?,
-                   nas_sync_error=NULL, updated_at=? WHERE id=?""",
+                   nas_sync_error=NULL, updated_at=?
+                   WHERE id=? AND cancel_requested=0 AND status!='CANCELLED'""",
                 (path, nas_sync_state, utc_now(), job_id),
             )
 
@@ -419,7 +512,7 @@ class StateStore:
                    nas_sync_next_attempt_at=?, nas_synced_at=COALESCE(?, nas_synced_at),
                    processed_file_path=COALESCE(?, processed_file_path),
                    processed_files_json=COALESCE(?, processed_files_json), updated_at=?
-                   WHERE id=?""",
+                   WHERE id=? AND cancel_requested=0 AND status!='CANCELLED'""",
                 (state, attempts, error, next_attempt_at, synced_at, processed_file_path,
                  processed_files_json, utc_now(), job_id),
             )

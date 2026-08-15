@@ -9,7 +9,7 @@ from urllib.parse import urlsplit
 import httpx
 
 from .config import Settings
-from .state import StateStore
+from .state import StateStore, job_handoff_id
 
 logger = logging.getLogger("yt_notifi")
 STATE_MAP = {
@@ -57,7 +57,7 @@ class DownloadHandoffWorker:
             response = self.client.post(
                 f"{self.bridge_url}/api/download-jobs",
                 json={
-                    "handoff_id": str(job["id"]),
+                    "handoff_id": job_handoff_id(job),
                     "video_id": job["video_id"],
                     "video_url": job["video_url"],
                     "channel_name": job["channel_name"],

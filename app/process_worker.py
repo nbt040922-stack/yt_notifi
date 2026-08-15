@@ -11,7 +11,7 @@ import httpx
 
 from .config import Settings
 from .nas_sync_worker import ensure_writable_directory, prepare_fallback
-from .state import StateStore
+from .state import StateStore, job_handoff_id
 
 
 logger = logging.getLogger("yt_notifi")
@@ -58,7 +58,7 @@ class ProcessHandoffWorker:
             response = self.client.post(
                 f"{self.bridge_url}/api/process-jobs",
                 json={
-                    "handoff_id": str(job["id"]),
+                    "handoff_id": job_handoff_id(job),
                     "source_file": job["downloaded_file_path"],
                     "channel_name": job["channel_name"],
                     "output_dir": str(processing_output_dir),

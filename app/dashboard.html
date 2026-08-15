@@ -60,11 +60,12 @@
     button:disabled { cursor: not-allowed; opacity: .45; }
     .resolve-status { min-height: 18px; margin-top: 7px; color: #9eabbd; font-size: 12px; }
     .resolve-status.success { color: #42d392; }
-    .job { display: grid; grid-template-columns: 1fr 1.2fr .7fr .8fr .8fr 1fr 1.4fr .6fr; gap: 12px; padding: 14px; border-bottom: 1px solid #252d3c; align-items: center; }
+    .job { display: grid; grid-template-columns: 1fr 1.2fr .7fr .8fr .8fr 1fr 1.4fr .6fr auto; gap: 12px; padding: 14px; border-bottom: 1px solid #252d3c; align-items: center; }
     .job:first-child { border-top: 1px solid #252d3c; }
     .job span { overflow-wrap: anywhere; font-size: 13px; }
     .job .muted { color: #8f9bad; }
-    .job .failed { color: #ff9ca6; }
+    .job .failed, .job .cancelled { color: #ff9ca6; }
+    .job-actions { display: flex; gap: 6px; }
     .form-error { min-height: 20px; margin: 12px 0; color: #ff9ca6; font-size: 13px; }
     .notice { position: fixed; right: 20px; bottom: 20px; background: #183a2d; border: 1px solid #34775d; border-radius: 9px; padding: 11px 15px; display: none; }
     @media (max-width: 700px) { main { margin-top: 24px; } .summary, .details { grid-template-columns: repeat(2, 1fr); } .row { align-items: flex-start; flex-direction: column; } .job { grid-template-columns: 1fr; } }
@@ -171,9 +172,10 @@
     const owner = teamMembers.find(member => member.id === (job.owner_id || teamMembers[0]?.id));
     const channel = document.createElement('strong'); channel.textContent = `${job.channel_name} · ${owner?.display_name || 'Legacy'}`;
     const video = document.createElement('span'); video.textContent = job.video_title || job.video_id;
-    const jobError = job.process_error || job.download_error || job.error;
+    const jobError = job.status === 'CANCELLED' ? 'USER_REQUEST' : job.process_error || job.download_error || job.error;
     const status = document.createElement('span'); status.textContent = jobError ? `${job.status}: ${jobError}` : job.status;
     if (job.status === 'FAILED') status.className = 'failed';
+    if (job.status === 'CANCELLED') status.className = 'cancelled';
     const download = document.createElement('span'); download.className = 'muted';
     download.textContent = job.download_state ? `${job.download_state}${job.download_progress ? ` ${Math.round(job.download_progress)}%` : ''}` : '—';
     const processing = document.createElement('span'); processing.className = 'muted';
@@ -188,7 +190,25 @@
     }
     const output = document.createElement('span'); output.className = 'muted'; output.textContent = job.processing_output_dir || job.output_dir || '—';
     const created = document.createElement('span'); created.className = 'muted'; created.textContent = formatTime(job.created_at);
-    row.append(channel, video, status, download, processing, nas, output, created); return row;
+    const actions = document.createElement('div'); actions.className = 'job-actions';
+    if (['QUEUED','DOWNLOAD_PENDING','DOWNLOADING','DOWNLOADED','PROCESS_PENDING','PROCESSING'].includes(job.status)) {
+      const cancel = document.createElement('button'); cancel.className = 'danger'; cancel.textContent = 'Hủy';
+      cancel.onclick = async () => {
+        if (!confirm('Hủy job này?')) return;
+        try { await request(`/api/jobs/${job.id}/cancel`, {method:'POST'}); await refresh(); }
+        catch (failure) { showNotice(failure.message); }
+      };
+      actions.append(cancel);
+    }
+    if (['FAILED','CANCELLED'].includes(job.status)) {
+      const retry = document.createElement('button'); retry.textContent = 'Thử lại';
+      retry.onclick = async () => {
+        try { await request(`/api/jobs/${job.id}/retry`, {method:'POST'}); await refresh(); }
+        catch (failure) { showNotice(failure.message); }
+      };
+      actions.append(retry);
+    }
+    row.append(channel, video, status, download, processing, nas, output, created, actions); return row;
   }
 
   async function refresh() {
