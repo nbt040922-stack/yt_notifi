@@ -253,6 +253,21 @@ def create_app(
         logging.getLogger("yt_notifi").info("JOBS_CLEAR_COMPLETED cleared=%s", cleared)
         return {"cleared": cleared}
 
+    @app.delete("/api/jobs/{job_id}")
+    def clear_failed_job(job_id: int) -> dict[str, str]:
+        result = state.clear_failed_job(job_id)
+        if result == "JOB_NOT_FOUND":
+            return JSONResponse(
+                {"error": result, "message": "Không tìm thấy job."}, status_code=404,
+            )
+        if result == "JOB_NOT_CLEARABLE":
+            return JSONResponse(
+                {"error": result, "message": "Job đang hoạt động hoặc chưa thể xóa."},
+                status_code=409,
+            )
+        logging.getLogger("yt_notifi").info("JOB_HISTORY_CLEARED job_id=%s", job_id)
+        return {"status": "cleared"}
+
     @app.post("/api/jobs/{job_id}/cancel")
     def cancel_job(job_id: int) -> dict:
         result = state.cancel_processing_job(job_id)

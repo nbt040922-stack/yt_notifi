@@ -304,6 +304,17 @@ class StateStore:
                 db.executemany("DELETE FROM processing_jobs WHERE id=?", clearable)
             return len(clearable)
 
+    def clear_failed_job(self, job_id: int) -> str:
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            job = db.execute("SELECT status FROM processing_jobs WHERE id=?", (job_id,)).fetchone()
+            if not job:
+                return "JOB_NOT_FOUND"
+            if job["status"] not in {"FAILED", "CANCELLED"}:
+                return "JOB_NOT_CLEARABLE"
+            db.execute("DELETE FROM processing_jobs WHERE id=?", (job_id,))
+            return "CLEARED"
+
     def cancel_processing_job(self, job_id: int) -> str:
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")

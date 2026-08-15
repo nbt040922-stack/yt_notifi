@@ -207,6 +207,16 @@
         catch (failure) { showNotice(failure.message); }
       };
       actions.append(retry);
+      const clear = document.createElement('button'); clear.className = 'danger'; clear.textContent = 'Xóa';
+      clear.onclick = async () => {
+        if (!confirm('Xóa lịch sử job này? File đã tạo sẽ được giữ nguyên.')) return;
+        try {
+          await request(`/api/jobs/${job.id}`, {method:'DELETE'});
+          showNotice('Đã xóa lịch sử job.');
+          await refresh();
+        } catch (failure) { showNotice(failure.message); }
+      };
+      actions.append(clear);
     }
     row.append(channel, video, status, download, processing, nas, output, created, actions); return row;
   }

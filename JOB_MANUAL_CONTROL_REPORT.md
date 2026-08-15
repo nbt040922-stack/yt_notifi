@@ -60,13 +60,15 @@ Luồng retry không gọi detector hoặc Telegram. Bản ghi notification và 
 - Mọi đường dẫn trong `processed_files_json` được kiểm tra còn là file không rỗng trước khi xóa lịch sử.
 - Clear chỉ xóa hàng trong `processing_jobs`; không gọi cleanup và không xóa output NAS/PART, source khác hay file của member/channel khác.
 - `FAILED`, `CANCELLED`, job đang hoạt động, NAS pending/syncing/retry/conflict và job còn cleanup dependency đều được giữ để tiếp tục xử lý hoặc retry.
+- `FAILED` và `CANCELLED` có nút **Xóa** riêng. `DELETE /api/jobs/{job_id}` chỉ xóa metadata của đúng job sau xác nhận; file local/NAS và ledger video vẫn được giữ nguyên.
+- Job đang hoạt động hoặc `DONE`/`COMPLETED` không thể đi qua API xóa lỗi/hủy và nhận `JOB_NOT_CLEARABLE`; job hoàn thành tiếp tục dùng bulk Clear Completed với các guard giao hàng/cleanup đầy đủ.
 - Bảng `videos`, lịch sử Telegram exactly-once và `channel_poll_state` không bị đụng tới, nên video cũ không được phát hiện/thông báo lại sau Clear hoặc restart.
 - `GET /api/jobs` mặc định trả 200 job mới nhất; tham số `limit` cho phép giảm số lượng và được chặn tối đa 500.
 - Không có auto-retention, Clear Selected hoặc xóa riêng FAILED/CANCELLED trong giai đoạn này.
 
 ## Kiểm thử
 
-- Bộ Clear Completed cô lập: **23 passed**.
-- Toàn bộ hồi quy YT_NOTIFI: **212 passed, 1 warning**.
+- Bộ Clear/Remove History cô lập: **29 passed**.
+- Toàn bộ hồi quy YT_NOTIFI: **218 passed, 1 warning**.
 - Warning duy nhất là cảnh báo deprecation sẵn có của Starlette/httpx TestClient.
 - Kiểm thử dùng SQLite, bridge và đường dẫn tạm; không restart production, không hủy job thật và không chạm NAS thật.

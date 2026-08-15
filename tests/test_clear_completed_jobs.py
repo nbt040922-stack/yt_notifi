@@ -133,6 +133,37 @@ def test_bulk_clear_count_excludes_failed_and_cancelled(settings, tmp_path):
     assert {row["status"] for row in state.processing_jobs()} == {"FAILED", "CANCELLED"}
 
 
+@pytest.mark.parametrize("status", ["FAILED", "CANCELLED"])
+def test_failed_or_cancelled_job_can_be_cleared_individually(settings, tmp_path, status):
+    state = StateStore(settings.state_db)
+    item, job, output = add_job(state, tmp_path, status=status)
+    retained = output / "diagnostic.mp4"
+    retained.write_bytes(b"keep")
+    assert state.record_event(item)
+    state.record_notification_attempt(item.video_id, True, None)
+
+    response = TestClient(create_app(settings, state=state)).delete(f"/api/jobs/{job['id']}")
+    assert response.status_code == 200 and response.json() == {"status": "cleared"}
+    assert state.processing_job(job["id"]) is None and retained.read_bytes() == b"keep"
+    assert state.get_video(item.video_id)["notification_sent"] == 1
+
+
+@pytest.mark.parametrize("status", ["QUEUED", "PROCESSING", "COMPLETED"])
+def test_active_or_completed_job_cannot_use_failed_clear(settings, tmp_path, status):
+    state = StateStore(settings.state_db)
+    _, job, _ = add_job(state, tmp_path, status=status)
+    response = TestClient(create_app(settings, state=state)).delete(f"/api/jobs/{job['id']}")
+    assert response.status_code == 409 and response.json()["error"] == "JOB_NOT_CLEARABLE"
+    assert state.processing_job(job["id"]) is not None
+
+
+def test_clear_failed_job_not_found_is_specific(settings):
+    response = TestClient(create_app(settings, state=StateStore(settings.state_db))).delete(
+        "/api/jobs/999"
+    )
+    assert response.status_code == 404 and response.json()["error"] == "JOB_NOT_FOUND"
+
+
 def test_video_dedupe_and_telegram_history_survive_clear_and_restart(settings, tmp_path):
     state = StateStore(settings.state_db)
     item, _, _ = complete_job(state, tmp_path)
@@ -185,3 +216,4 @@ def test_dashboard_has_one_bulk_clear_action():
     assert html.count('id="clear-completed"') == 1
     assert "/api/jobs/clear-completed" in html
     assert "Xóa lịch sử các job đã hoàn thành?" in html
+    assert "Xóa lịch sử job này? File đã tạo sẽ được giữ nguyên." in html
