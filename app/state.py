@@ -77,9 +77,16 @@ class StateStore:
                     name TEXT NOT NULL,
                     source_url TEXT NOT NULL,
                     created_at TEXT NOT NULL,
-                    enabled INTEGER NOT NULL DEFAULT 1
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    cut_enabled INTEGER NOT NULL DEFAULT 0,
+                    owner_id TEXT
                 )"""
             )
+            notify_columns = {row[1] for row in db.execute("PRAGMA table_info(notify_channels)")}
+            if "cut_enabled" not in notify_columns:
+                db.execute("ALTER TABLE notify_channels ADD COLUMN cut_enabled INTEGER NOT NULL DEFAULT 0")
+            if "owner_id" not in notify_columns:
+                db.execute("ALTER TABLE notify_channels ADD COLUMN owner_id TEXT")
             db.execute(
                 """CREATE TABLE IF NOT EXISTS processing_jobs (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -254,11 +261,24 @@ class StateStore:
             row = db.execute("SELECT * FROM notify_channels WHERE channel_id=?", (channel_id,)).fetchone()
             return row, cursor.rowcount == 1
 
-    def update_notify_channel(self, channel_id: str, enabled: bool) -> sqlite3.Row | None:
+    def update_notify_channel(
+        self,
+        channel_id: str,
+        enabled: bool | None = None,
+        cut_enabled: bool | None = None,
+        owner_id: str | None = None,
+    ) -> sqlite3.Row | None:
         with self._connect() as db:
             cursor = db.execute(
-                "UPDATE notify_channels SET enabled=? WHERE channel_id=?",
-                (int(enabled), channel_id),
+                """UPDATE notify_channels SET enabled=COALESCE(?, enabled),
+                   cut_enabled=COALESCE(?, cut_enabled), owner_id=COALESCE(?, owner_id)
+                   WHERE channel_id=?""",
+                (
+                    int(enabled) if enabled is not None else None,
+                    int(cut_enabled) if cut_enabled is not None else None,
+                    owner_id,
+                    channel_id,
+                ),
             )
             if not cursor.rowcount:
                 return None

@@ -54,6 +54,14 @@ class NotifyBulkCreate(BaseModel):
     channels: list[str] = Field(min_length=1, max_length=500)
 
 
+class NotifyChannelUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: StrictBool | None = None
+    cut_enabled: StrictBool | None = None
+    owner_id: str | None = Field(default=None, max_length=50)
+
+
 class ProcessingControlUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -92,7 +100,7 @@ def create_app(
 
     def notify_channels():
         return [
-            Channel(row["channel_id"], row["name"])
+            Channel(row["channel_id"], row["name"], True, row["owner_id"] or "")
             for row in state.notify_channels(enabled_only=True)
         ]
 
@@ -106,9 +114,14 @@ def create_app(
 
     def processing_channel_ids():
         try:
-            return {channel.channel_id for channel in silence_channels()}
+            channel_ids = {channel.channel_id for channel in silence_channels()}
         except ChannelStoreError:
-            return set()
+            channel_ids = set()
+        channel_ids.update(
+            row["channel_id"] for row in state.notify_channels(enabled_only=True)
+            if row["cut_enabled"]
+        )
+        return channel_ids
 
     channels = monitored_channels()
     poller = ChannelPoller(
@@ -189,8 +202,13 @@ def create_app(
         }
 
     def notify_channel_payload(row) -> dict:
-        payload = channel_payload(Channel(row["channel_id"], row["name"], bool(row["enabled"])))
-        payload.update({"id": row["id"], "source_url": row["source_url"], "created_at": row["created_at"]})
+        payload = channel_payload(Channel(
+            row["channel_id"], row["name"], bool(row["enabled"]), row["owner_id"] or ""
+        ))
+        payload.update({
+            "id": row["id"], "source_url": row["source_url"], "created_at": row["created_at"],
+            "cut_enabled": bool(row["cut_enabled"]), "owner_id": row["owner_id"],
+        })
         return payload
 
     @app.get("/", response_class=HTMLResponse)
@@ -326,11 +344,20 @@ def create_app(
         }
 
     @app.patch("/api/notify-channels/{channel_id}")
-    def update_notify_channel(channel_id: str, payload: ChannelUpdate) -> dict:
+    def update_notify_channel(channel_id: str, payload: NotifyChannelUpdate) -> dict:
         before = next((row for row in state.notify_channels() if row["channel_id"] == channel_id), None)
-        row = state.update_notify_channel(channel_id, payload.enabled)
-        if not row:
+        if not before:
             return JSONResponse({"error": "CHANNEL_NOT_FOUND", "message": "Channel not found."}, status_code=404)
+        owner_ids = {member.id for member in team_members}
+        if payload.owner_id is not None and payload.owner_id not in owner_ids:
+            return JSONResponse({"error": "INVALID_OWNER", "message": "Owner không hợp lệ."}, status_code=400)
+        cut_enabled = payload.cut_enabled if payload.cut_enabled is not None else bool(before["cut_enabled"])
+        owner_id = payload.owner_id or before["owner_id"]
+        if cut_enabled and not owner_id:
+            return JSONResponse({"error": "OWNER_REQUIRED", "message": "Phải chọn người nhận output."}, status_code=400)
+        row = state.update_notify_channel(
+            channel_id, payload.enabled, payload.cut_enabled, payload.owner_id
+        )
         silence_ids = processing_channel_ids()
         if payload.enabled and before and not before["enabled"] and channel_id not in silence_ids:
             state.reset_poll_baseline(channel_id)

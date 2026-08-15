@@ -74,11 +74,12 @@ def test_channel_api_adds_filters_and_rejects_owner_changes(settings):
     assert client.get("/api/channels").json()[1]["owner_id"] == members[0].id
 
 
-def test_notify_channels_remain_owner_free(settings):
+def test_notify_channels_default_to_cut_off_without_owner(settings):
     state = StateStore(settings.state_db)
     state.add_notify_channel(CHANNEL_ID, "Notify", f"https://youtube.com/channel/{CHANNEL_ID}")
     row = dict(state.notify_channels()[0])
-    assert "owner_id" not in row
+    assert row["cut_enabled"] == 0
+    assert row["owner_id"] is None
 
 
 def test_all_four_owners_snapshot_exact_member_and_channel_folder(settings, tmp_path):

@@ -39,6 +39,7 @@
     .details span { display: block; color: #7f8a9b; font-size: 11px; margin-bottom: 5px; }
     .details strong { font-size: 13px; font-weight: 500; overflow-wrap: anywhere; }
     .actions { gap: 8px; flex-shrink: 0; }
+    .actions select { width: auto; min-width: 110px; }
     .empty, .error { padding: 28px; text-align: center; color: #8f9bad; border: 1px dashed #344057; border-radius: 12px; }
     .error { color: #ff9ca6; }
     dialog { width: min(480px, calc(100% - 28px)); border: 1px solid #344057; border-radius: 14px; background: #111620; color: #edf1f7; padding: 24px; }
@@ -182,13 +183,28 @@
     const badge = document.createElement('div'); badge.className = `badge ${channel.enabled ? '' : 'disabled'}`;
     const dot = document.createElement('span'); dot.className = 'dot';
     const status = document.createElement('span'); status.textContent = channel.enabled ? 'Enabled' : 'Disabled';
-    badge.append(dot, status); info.append(title, id, badge);
+    const cutStatus = document.createElement('div'); cutStatus.className = 'badge';
+    const owner = teamMembers.find(member => member.id === channel.owner_id);
+    cutStatus.textContent = channel.cut_enabled ? `Cắt tool: ON · Output: ${owner?.display_name || '—'}` : 'Cắt tool: OFF';
+    badge.append(dot, status); info.append(title, id, badge, cutStatus);
     const actions = document.createElement('div'); actions.className = 'actions';
     const toggle = document.createElement('button'); toggle.textContent = channel.enabled ? 'Tắt' : 'Bật';
     toggle.onclick = async () => { await request(`/api/notify-channels/${channel.channel_id}`, {method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({enabled:!channel.enabled})}); await refresh(); };
+    const ownerSelect = document.createElement('select'); ownerSelect.title = 'Member nhận output';
+    ownerSelect.append(new Option('Chọn member', ''));
+    teamMembers.forEach(member => ownerSelect.append(new Option(member.display_name, member.id)));
+    ownerSelect.value = channel.owner_id || '';
+    ownerSelect.onchange = async () => { if (ownerSelect.value) { await request(`/api/notify-channels/${channel.channel_id}`, {method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({owner_id:ownerSelect.value})}); await refresh(); } };
+    const cut = document.createElement('button'); cut.textContent = `Cắt tool: ${channel.cut_enabled ? 'ON' : 'OFF'}`;
+    cut.onclick = async () => {
+      const ownerId = channel.owner_id || ownerSelect.value;
+      if (!channel.cut_enabled && !ownerId) { showNotice('Hãy chọn member nhận output trước.'); ownerSelect.focus(); return; }
+      await request(`/api/notify-channels/${channel.channel_id}`, {method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({cut_enabled:!channel.cut_enabled, ...(!channel.cut_enabled ? {owner_id:ownerId} : {})})});
+      await refresh();
+    };
     const remove = document.createElement('button'); remove.className = 'danger'; remove.textContent = 'Xóa';
     remove.onclick = async () => { if (confirm('Xóa kênh khỏi danh sách chỉ thông báo?')) { await request(`/api/notify-channels/${channel.channel_id}`, {method:'DELETE'}); await refresh(); } };
-    actions.append(toggle, remove); row.append(info, actions);
+    actions.append(ownerSelect, cut, toggle, remove); row.append(info, actions);
     const details = document.createElement('div'); details.className = 'details';
     details.append(detail('Đã thêm', formatTime(channel.created_at)), detail('Poll gần nhất', formatTime(channel.last_poll_at)), detail('Video gần nhất', channel.latest_seen_video_id), detail('Số lỗi', channel.failures));
     card.append(row, details); return card;
