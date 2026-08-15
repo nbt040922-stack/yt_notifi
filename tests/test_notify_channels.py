@@ -79,6 +79,7 @@ def test_bulk_add_per_member_defaults_off_and_rejects_cross_member_duplicate(set
     assert (first["added"], first["failed"]) == (2, 0)
     rows = {row["channel_id"]: row for row in api.get("/api/channels").json()}
     assert rows[IDS[0]]["owner_id"] == "member_2" and rows[IDS[0]]["cut_enabled"] is False
+    assert rows[IDS[0]]["name"] == "Official 1"
     assert duplicate["existing"] == 1 and duplicate["results"][0]["error"]
 
 

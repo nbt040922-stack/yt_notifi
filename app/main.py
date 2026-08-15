@@ -41,6 +41,7 @@ class ChannelUpdate(BaseModel):
 
     enabled: bool | None = None
     cut_enabled: StrictBool | None = None
+    name: str | None = None
 
 
 class ChannelResolve(BaseModel):
@@ -407,10 +408,10 @@ def create_app(
 
     @app.patch("/api/channels/{channel_id}")
     def update_channel(channel_id: str, payload: ChannelUpdate) -> dict:
-        if payload.enabled is None and payload.cut_enabled is None:
+        if payload.enabled is None and payload.cut_enabled is None and payload.name is None:
             raise ChannelStoreError("INVALID_REQUEST", "Không có thay đổi.")
         channel, changed_to_enabled = channel_store.update(
-            channel_id, payload.enabled, cut_enabled=payload.cut_enabled,
+            channel_id, payload.enabled, cut_enabled=payload.cut_enabled, name=payload.name,
         )
         if changed_to_enabled:
             state.reset_poll_baseline(channel.channel_id)

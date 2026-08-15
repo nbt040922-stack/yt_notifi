@@ -30,6 +30,9 @@
     .channel { border: 1px solid #293142; border-radius: 12px; padding: 20px; margin-bottom: 12px; background: #111620dd; }
     .row { justify-content: space-between; gap: 18px; }
     .channel h3 { margin: 0 0 5px; font-size: 17px; }
+    .title-row { display: flex; align-items: center; gap: 7px; }
+    .title-row h3 { margin: 0; }
+    .edit-name { padding: 2px 6px; border: 0; background: transparent; font-size: 16px; }
     .channel-id { color: #8f9bad; font-family: ui-monospace, monospace; font-size: 13px; overflow-wrap: anywhere; }
     .badge { margin-top: 11px; color: #aeb8c7; }
     .badge .dot { width: 7px; height: 7px; }
@@ -94,6 +97,15 @@
     <div id="jobs"></div>
   </section>
 </main>
+<dialog id="rename-dialog">
+  <form id="rename-form">
+    <h3>Đổi tên hiển thị</h3>
+    <label for="rename-input">Tên kênh</label>
+    <input id="rename-input" maxlength="100" required>
+    <div class="form-error" id="rename-error"></div>
+    <div class="actions"><button type="button" id="rename-cancel">Hủy</button><button class="primary" type="submit">Lưu</button></div>
+  </form>
+</dialog>
 <div class="notice" id="notice"></div>
 
 <script>
@@ -102,6 +114,7 @@
   let teamMembers = [];
   let activeOwner = '';
   let processingControl = null;
+  let renameChannel = null;
   const formatTime = value => value ? new Date(value).toLocaleTimeString('vi-VN') : '—';
   const escapeText = value => String(value ?? '—');
 
@@ -128,6 +141,10 @@
     const row = document.createElement('div'); row.className = 'row';
     const info = document.createElement('div');
     const title = document.createElement('h3'); title.textContent = channel.name;
+    const titleRow = document.createElement('div'); titleRow.className = 'title-row';
+    const edit = document.createElement('button'); edit.className = 'edit-name'; edit.type = 'button'; edit.textContent = '✎'; edit.title = 'Đổi tên kênh'; edit.setAttribute('aria-label', `Đổi tên ${channel.name}`);
+    edit.onclick = () => { renameChannel = channel; document.querySelector('#rename-input').value = channel.name; document.querySelector('#rename-error').textContent = ''; document.querySelector('#rename-dialog').showModal(); };
+    titleRow.append(title, edit);
     const id = document.createElement('div'); id.className = 'channel-id'; id.textContent = channel.channel_id;
     const badge = document.createElement('div');
     badge.className = `badge ${channel.enabled ? (channel.failures ? 'retrying' : '') : 'disabled'}`;
@@ -135,7 +152,7 @@
     const status = document.createElement('span'); status.textContent = channel.status;
     const cutStatus = document.createElement('div'); cutStatus.className = 'badge';
     cutStatus.textContent = `Cắt tool: ${channel.cut_enabled ? 'ON' : 'OFF'}`;
-    badge.append(dot, status); info.append(title, id, badge, cutStatus);
+    badge.append(dot, status); info.append(titleRow, id, badge, cutStatus);
     const actions = document.createElement('div'); actions.className = 'actions';
     const cut = document.createElement('button'); cut.textContent = `Cắt tool: ${channel.cut_enabled ? 'ON' : 'OFF'}`;
     cut.onclick = async () => { await request(`/api/channels/${channel.channel_id}`, {method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({cut_enabled:!channel.cut_enabled})}); await refresh(); };
@@ -209,6 +226,16 @@
       processingControl = await request('/api/processing-control', {method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({silence_engine_enabled:enable})});
       await refresh();
     } catch (failure) { showNotice(failure.message); }
+  };
+  document.querySelector('#rename-cancel').onclick = () => document.querySelector('#rename-dialog').close();
+  document.querySelector('#rename-form').onsubmit = async event => {
+    event.preventDefault();
+    const error = document.querySelector('#rename-error'); error.textContent = '';
+    try {
+      await request(`/api/channels/${renameChannel.channel_id}`, {method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name:document.querySelector('#rename-input').value})});
+      document.querySelector('#rename-dialog').close();
+      await refresh();
+    } catch (failure) { error.textContent = failure.message; }
   };
   document.querySelector('#channel-bulk-form').onsubmit = async event => {
     event.preventDefault();

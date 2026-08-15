@@ -117,10 +117,16 @@ class ChannelStore:
     def update(
         self, channel_id: str, enabled: bool | None = None,
         owner_id: str | None = None, cut_enabled: bool | None = None,
+        name: str | None = None,
     ) -> tuple[Channel, bool]:
         channel_id = parse_channel_id(channel_id)
         if owner_id is not None and owner_id not in self.owner_ids:
             raise ChannelStoreError("INVALID_OWNER_ID", "Thành viên không hợp lệ.")
+        display_name = name.strip() if name is not None else None
+        if display_name is not None and not display_name:
+            raise ChannelStoreError("INVALID_CHANNEL_NAME", "Tên kênh không được để trống.")
+        if display_name is not None and len(display_name) > 100:
+            raise ChannelStoreError("INVALID_CHANNEL_NAME", "Tên kênh quá dài.")
         with self._lock:
             channels = self._load_unlocked()
             for index, channel in enumerate(channels):
@@ -128,7 +134,7 @@ class ChannelStore:
                     new_enabled = channel.enabled if enabled is None else enabled
                     changed_to_enabled = not channel.enabled and new_enabled
                     updated = Channel(
-                        channel.channel_id, channel.name, new_enabled,
+                        channel.channel_id, display_name or channel.name, new_enabled,
                         owner_id or channel.owner_id,
                         channel.cut_enabled if cut_enabled is None else cut_enabled,
                     )
