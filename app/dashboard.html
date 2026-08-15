@@ -94,7 +94,7 @@
     </form>
     <h2>KÊNH THEO DÕI</h2>
     <div id="channels"></div>
-    <h2>JOBS</h2>
+    <div class="toolbar"><h2>JOBS</h2><button class="danger" id="clear-completed">Xóa job hoàn thành</button></div>
     <div id="jobs"></div>
   </section>
 </main>
@@ -239,6 +239,14 @@
   }
 
   function showNotice(message) { const notice = document.querySelector('#notice'); notice.textContent = message; notice.style.display = 'block'; setTimeout(() => notice.style.display = 'none', 2200); }
+  document.querySelector('#clear-completed').onclick = async () => {
+    if (!confirm('Xóa lịch sử các job đã hoàn thành?')) return;
+    try {
+      const result = await request('/api/jobs/clear-completed', {method:'POST'});
+      showNotice(`Đã xóa ${result.cleared} job hoàn thành.`);
+      await refresh();
+    } catch (failure) { showNotice(failure.message); }
+  };
   document.querySelector('#engine-toggle').onclick = async () => {
     if (!processingControl) return;
     const enable = !processingControl.silence_engine_enabled || processingControl.qwen_status === 'ERROR';

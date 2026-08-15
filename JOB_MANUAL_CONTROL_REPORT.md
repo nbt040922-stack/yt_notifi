@@ -51,9 +51,22 @@ Luồng retry không gọi detector hoặc Telegram. Bản ghi notification và 
 - Nếu worker hoàn tất trước, Cancel thấy trạng thái terminal và trả conflict. Nếu Cancel thắng, kết quả worker đến muộn bị bỏ qua.
 - Retry kép chỉ kích hoạt một lần; lần sau trả `JOB_ALREADY_RUNNING`.
 
+## Clear Completed
+
+- Dashboard có một thao tác bulk **Xóa job hoàn thành**, gọi duy nhất `POST /api/jobs/clear-completed` và làm mới danh sách ngay sau khi xóa.
+- Backend chọn và xóa trong một transaction SQLite; nếu một lần xóa lỗi, toàn bộ transaction được rollback.
+- Chỉ `DONE`/`COMPLETED` có `process_state=DONE`, `nas_sync_state=DONE|NOT_REQUIRED`, `cleanup_state=CLEANED`, source đã cleanup và không còn lịch retry mới đủ điều kiện.
+- Với local fallback, bắt buộc NAS đã giao xong, `fallback_cleanup_at` đã ghi và thư mục fallback không còn tồn tại.
+- Mọi đường dẫn trong `processed_files_json` được kiểm tra còn là file không rỗng trước khi xóa lịch sử.
+- Clear chỉ xóa hàng trong `processing_jobs`; không gọi cleanup và không xóa output NAS/PART, source khác hay file của member/channel khác.
+- `FAILED`, `CANCELLED`, job đang hoạt động, NAS pending/syncing/retry/conflict và job còn cleanup dependency đều được giữ để tiếp tục xử lý hoặc retry.
+- Bảng `videos`, lịch sử Telegram exactly-once và `channel_poll_state` không bị đụng tới, nên video cũ không được phát hiện/thông báo lại sau Clear hoặc restart.
+- `GET /api/jobs` mặc định trả 200 job mới nhất; tham số `limit` cho phép giảm số lượng và được chặn tối đa 500.
+- Không có auto-retention, Clear Selected hoặc xóa riêng FAILED/CANCELLED trong giai đoạn này.
+
 ## Kiểm thử
 
-- Bộ điều khiển cô lập: **18 passed**.
-- Toàn bộ hồi quy YT_NOTIFI: **189 passed, 1 warning**.
+- Bộ Clear Completed cô lập: **23 passed**.
+- Toàn bộ hồi quy YT_NOTIFI: **212 passed, 1 warning**.
 - Warning duy nhất là cảnh báo deprecation sẵn có của Starlette/httpx TestClient.
 - Kiểm thử dùng SQLite, bridge và đường dẫn tạm; không restart production, không hủy job thật và không chạm NAS thật.

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -250,13 +251,58 @@ class StateStore:
             )
             return cursor.rowcount == 1
 
-    def processing_jobs(self) -> list[sqlite3.Row]:
+    def processing_jobs(self, limit: int | None = None) -> list[sqlite3.Row]:
+        query = "SELECT * FROM processing_jobs ORDER BY id DESC"
+        parameters = ()
+        if limit is not None:
+            query += " LIMIT ?"
+            parameters = (limit,)
         with self._connect() as db:
-            return list(db.execute("SELECT * FROM processing_jobs ORDER BY id DESC"))
+            return list(db.execute(query, parameters))
 
     def processing_job(self, job_id: int) -> sqlite3.Row | None:
         with self._connect() as db:
             return db.execute("SELECT * FROM processing_jobs WHERE id=?", (job_id,)).fetchone()
+
+    def clear_completed_jobs(self) -> int:
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            candidates = db.execute(
+                """SELECT * FROM processing_jobs
+                   WHERE status IN ('DONE','COMPLETED')
+                     AND process_state='DONE'
+                     AND nas_sync_state IN ('DONE','NOT_REQUIRED')
+                     AND cleanup_state='CLEANED'
+                     AND source_deleted=1
+                     AND cancel_requested=0
+                     AND nas_sync_next_attempt_at IS NULL
+                     AND next_download_attempt_at IS NULL
+                     AND next_process_attempt_at IS NULL
+                     AND next_cleanup_attempt_at IS NULL
+                     AND (nas_sync_state!='DONE'
+                          OR processing_output_dir=intended_output_dir
+                          OR fallback_cleanup_at IS NOT NULL)"""
+            ).fetchall()
+            clearable = []
+            for job in candidates:
+                try:
+                    values = json.loads(job["processed_files_json"] or "null")
+                    outputs = [Path(value) for value in values] if isinstance(values, list) else []
+                    verified = outputs and all(
+                        path.is_file() and path.stat().st_size > 0 for path in outputs
+                    )
+                    fallback = Path(job["processing_output_dir"] or "")
+                    fallback_clean = (
+                        job["processing_output_dir"] == job["intended_output_dir"]
+                        or not fallback.exists()
+                    )
+                except (OSError, TypeError, json.JSONDecodeError):
+                    verified, fallback_clean = False, False
+                if verified and fallback_clean:
+                    clearable.append((job["id"],))
+            if clearable:
+                db.executemany("DELETE FROM processing_jobs WHERE id=?", clearable)
+            return len(clearable)
 
     def cancel_processing_job(self, job_id: int) -> str:
         with self._connect() as db:

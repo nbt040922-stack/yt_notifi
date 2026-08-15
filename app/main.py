@@ -244,8 +244,14 @@ def create_app(
         return [member.__dict__ for member in team_members]
 
     @app.get("/api/jobs")
-    def api_jobs() -> list[dict]:
-        return [dict(job) for job in state.processing_jobs()]
+    def api_jobs(limit: int = 200) -> list[dict]:
+        return [dict(job) for job in state.processing_jobs(max(1, min(limit, 500)))]
+
+    @app.post("/api/jobs/clear-completed")
+    def clear_completed_jobs() -> dict[str, int]:
+        cleared = state.clear_completed_jobs()
+        logging.getLogger("yt_notifi").info("JOBS_CLEAR_COMPLETED cleared=%s", cleared)
+        return {"cleared": cleared}
 
     @app.post("/api/jobs/{job_id}/cancel")
     def cancel_job(job_id: int) -> dict:
