@@ -84,6 +84,7 @@ class Channel:
     name: str
     enabled: bool = True
     owner_id: str = "member_1"
+    cut_enabled: bool = True
 
 
 @dataclass(frozen=True)
@@ -137,7 +138,10 @@ def load_channels(path: Path, owner_ids: set[str] | None = None, default_owner: 
         owner_id = str(item.get("owner_id") or default_owner)
         if owner_ids is not None and owner_id not in owner_ids:
             raise ValueError(f"Invalid owner_id: {owner_id!r}")
-        channels.append(Channel(channel_id, str(item.get("name") or channel_id), bool(item.get("enabled", True)), owner_id))
+        channels.append(Channel(
+            channel_id, str(item.get("name") or channel_id), bool(item.get("enabled", True)),
+            owner_id, bool(item.get("cut_enabled", True)),
+        ))
     return channels
 
 

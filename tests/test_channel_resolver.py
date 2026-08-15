@@ -137,9 +137,8 @@ def test_old_channels_json_remains_compatible(settings):
     assert channel.enabled is True
 
 
-def test_add_button_stays_disabled_until_name_and_resolve(settings):
+def test_dashboard_uses_member_bulk_add(settings):
     html = TestClient(create_app(settings)).get("/").text
-    assert 'id="submit-add" type="submit" disabled' in html
-    assert "submitAdd.disabled = !(nameInput.value.trim() && resolvedId)" in html
-    assert "/api/channels/resolve" in html
-    assert "nameInput.value =" not in html
+    assert 'id="channel-bulk-submit" type="submit"' in html
+    assert "/api/channels/bulk" in html
+    assert "owner_id:activeOwner" in html

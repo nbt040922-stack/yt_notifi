@@ -50,7 +50,7 @@ def test_dashboard_loads(settings):
     response = TestClient(create_app(settings)).get("/")
     assert response.status_code == 200
     assert "YT_NOTIFI" in response.text
-    assert "+ Thêm kênh" in response.text
+    assert "THÊM HÀNG LOẠT KÊNH" in response.text
 
 
 def test_dashboard_accepts_lan_host_header(settings):

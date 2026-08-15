@@ -40,6 +40,7 @@ class ChannelUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     enabled: bool | None = None
+    cut_enabled: StrictBool | None = None
 
 
 class ChannelResolve(BaseModel):
@@ -48,10 +49,11 @@ class ChannelResolve(BaseModel):
     url: str = Field(min_length=1, max_length=500)
 
 
-class NotifyBulkCreate(BaseModel):
+class ChannelBulkCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     channels: list[str] = Field(min_length=1, max_length=500)
+    owner_id: str = Field(min_length=1, max_length=50)
 
 
 class NotifyChannelUpdate(BaseModel):
@@ -95,37 +97,19 @@ def create_app(
     notifier = notifier or TelegramNotifier(settings.telegram_bot_token, settings.telegram_chat_id)
     channel_store = channel_store or ChannelStore(settings.channels_file, team_members)
     channel_resolver = channel_resolver or resolve_channel
-    def silence_channels():
-        return channel_store.enabled()
-
-    def notify_channels():
-        return [
-            Channel(row["channel_id"], row["name"], True, row["owner_id"] or "")
-            for row in state.notify_channels(enabled_only=True)
-        ]
-
-    def monitored_channels():
-        merged = {channel.channel_id: channel for channel in notify_channels()}
-        try:
-            merged.update({channel.channel_id: channel for channel in silence_channels()})
-        except ChannelStoreError:
-            pass
-        return list(merged.values())
-
     def processing_channel_ids():
         try:
-            channel_ids = {channel.channel_id for channel in silence_channels()}
+            return {channel.channel_id for channel in channel_store.enabled() if channel.cut_enabled}
         except ChannelStoreError:
-            channel_ids = set()
-        channel_ids.update(
-            row["channel_id"] for row in state.notify_channels(enabled_only=True)
-            if row["cut_enabled"]
-        )
-        return channel_ids
+            return set()
 
-    channels = monitored_channels()
+    migration = {"imported": 0, "conflicts": 0, "unresolved": 0}
+    try:
+        channels = channel_store.enabled()
+    except ChannelStoreError:
+        channels = []
     poller = ChannelPoller(
-        settings, state, notifier, channels, channel_loader=monitored_channels,
+        settings, state, notifier, channels, channel_loader=channel_store.enabled,
         processing_channel_loader=processing_channel_ids, team_members=team_members,
     )
     download_worker = DownloadHandoffWorker(settings, state)
@@ -144,6 +128,13 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
+        migration.update(channel_store.migrate_notify_channels(state.notify_channels()))
+        poller.refresh_channels()
+        if migration["unresolved"] or migration["conflicts"]:
+            logging.getLogger("yt_notifi").warning(
+                "LEGACY_NOTIFY_MIGRATION imported=%s conflicts=%s unresolved=%s",
+                migration["imported"], migration["conflicts"], migration["unresolved"],
+            )
         if settings.enable_background_tasks and not poller.executable:
             raise RuntimeError("yt-dlp is required for YT_NOTIFI polling")
         stop = asyncio.Event()
@@ -194,6 +185,7 @@ def create_app(
             "name": channel.name,
             "enabled": channel.enabled,
             "owner_id": channel.owner_id,
+            "cut_enabled": channel.cut_enabled,
             "last_poll_at": row["last_poll_at"] if row else None,
             "last_success_at": row["last_success_at"] if row else None,
             "latest_seen_video_id": row["latest_seen_video_id"] if row else None,
@@ -237,9 +229,9 @@ def create_app(
             "ytdlp": "READY" if poller.executable else "MISSING",
             "telegram": "CONFIGURED" if settings.telegram_bot_token and settings.telegram_chat_id else "NOT CONFIGURED",
             "enabled_channels": enabled_count,
-            "enabled_notify_channels": len(state.notify_channels(enabled_only=True)),
             "last_new_video": state.latest_activity()["last_new_video"],
             "config_error": config_error,
+            "legacy_notify_migration": migration,
         }
 
     @app.get("/api/channels")
@@ -275,8 +267,10 @@ def create_app(
     def api_notify_channels() -> list[dict]:
         return [notify_channel_payload(row) for row in state.notify_channels()]
 
-    @app.post("/api/notify-channels/bulk")
-    async def add_notify_channels(payload: NotifyBulkCreate) -> dict:
+    @app.post("/api/channels/bulk")
+    async def add_channels_bulk(payload: ChannelBulkCreate) -> dict:
+        if payload.owner_id not in {member.id for member in team_members}:
+            raise ChannelStoreError("INVALID_OWNER_ID", "Thành viên không hợp lệ.")
         semaphore = asyncio.Semaphore(settings.notify_resolve_concurrency)
         unique_inputs = list(dict.fromkeys(
             value.strip() for value in payload.channels if value.strip() and len(value.strip()) <= 500
@@ -290,18 +284,17 @@ def create_app(
                     return await asyncio.to_thread(channel_resolver, settings, value), None
                 except ChannelResolveError as exc:
                     logging.getLogger("yt_notifi").info(
-                        "NOTIFY_CHANNEL_RESOLVE_FAILED error_type=%s", type(exc).__name__
+                        "CHANNEL_BULK_RESOLVE_FAILED error_type=%s", type(exc).__name__
                     )
                     return None, str(exc)
                 except Exception as exc:
                     logging.getLogger("yt_notifi").info(
-                        "NOTIFY_CHANNEL_RESOLVE_FAILED error_type=%s", type(exc).__name__
+                        "CHANNEL_BULK_RESOLVE_FAILED error_type=%s", type(exc).__name__
                     )
                     return None, "Could not resolve YouTube channel ID."
 
         resolved = dict(zip(unique_inputs, await asyncio.gather(*(resolve(value) for value in unique_inputs))))
         results, seen_inputs, seen_channels = [], set(), set()
-        silence_ids = processing_channel_ids()
         for original in payload.channels:
             value = original.strip()
             if not value:
@@ -324,14 +317,25 @@ def create_app(
                 })
                 continue
             name = item.title or item.channel_id
-            row, added = state.add_notify_channel(item.channel_id, name, item.canonical_url)
             duplicate = value in seen_inputs or item.channel_id in seen_channels
-            status = "ADDED" if added and not duplicate else "ALREADY_EXISTS"
-            if added and item.channel_id not in silence_ids:
+            try:
+                channel = channel_store.add(
+                    item.channel_id, name, owner_id=payload.owner_id, cut_enabled=False,
+                )
                 state.reset_poll_baseline(item.channel_id)
+                status, item_error = "ADDED", None
+            except ChannelStoreError as exc:
+                channel = next(
+                    (row for row in channel_store.list() if row.channel_id == item.channel_id), None
+                )
+                owner = next((member for member in team_members if channel and member.id == channel.owner_id), None)
+                status = "ALREADY_EXISTS" if exc.code == "CHANNEL_ALREADY_EXISTS" else "FAILED"
+                item_error = f"Kênh này đang thuộc {owner.display_name}." if owner else exc.message
+            if duplicate:
+                status = "ALREADY_EXISTS"
             results.append({
                 "input": original, "status": status, "channel_id": item.channel_id,
-                "name": row["name"], "error": None,
+                "name": channel.name if channel else name, "error": item_error,
             })
             seen_inputs.add(value)
             seen_channels.add(item.channel_id)
@@ -403,9 +407,11 @@ def create_app(
 
     @app.patch("/api/channels/{channel_id}")
     def update_channel(channel_id: str, payload: ChannelUpdate) -> dict:
-        if payload.enabled is None:
+        if payload.enabled is None and payload.cut_enabled is None:
             raise ChannelStoreError("INVALID_REQUEST", "Không có thay đổi.")
-        channel, changed_to_enabled = channel_store.update(channel_id, payload.enabled)
+        channel, changed_to_enabled = channel_store.update(
+            channel_id, payload.enabled, cut_enabled=payload.cut_enabled,
+        )
         if changed_to_enabled:
             state.reset_poll_baseline(channel.channel_id)
         return channel_payload(channel)

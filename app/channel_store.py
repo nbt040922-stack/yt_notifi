@@ -76,7 +76,11 @@ class ChannelStore:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         temporary = self.path.with_name(self.path.name + ".tmp")
         payload = [
-            {"channel_id": channel.channel_id, "name": channel.name, "enabled": channel.enabled, "owner_id": channel.owner_id}
+            {
+                "channel_id": channel.channel_id, "name": channel.name,
+                "enabled": channel.enabled, "owner_id": channel.owner_id,
+                "cut_enabled": channel.cut_enabled,
+            }
             for channel in channels
         ]
         try:
@@ -91,7 +95,10 @@ class ChannelStore:
                 temporary.unlink()
         self._generation += 1
 
-    def add(self, value: str, name: str | None = None, enabled: bool = True, owner_id: str | None = None) -> Channel:
+    def add(
+        self, value: str, name: str | None = None, enabled: bool = True,
+        owner_id: str | None = None, cut_enabled: bool = False,
+    ) -> Channel:
         channel_id = parse_channel_id(value)
         display_name = (name or "").strip()
         if not display_name:
@@ -103,11 +110,14 @@ class ChannelStore:
             channels = self._load_unlocked()
             if any(channel.channel_id == channel_id for channel in channels):
                 raise ChannelStoreError("CHANNEL_ALREADY_EXISTS", "Kênh này đã có trong danh sách theo dõi.", 409)
-            channel = Channel(channel_id, display_name, enabled, owner_id)
+            channel = Channel(channel_id, display_name, enabled, owner_id, cut_enabled)
             self._save_unlocked([*channels, channel])
             return channel
 
-    def update(self, channel_id: str, enabled: bool | None = None, owner_id: str | None = None) -> tuple[Channel, bool]:
+    def update(
+        self, channel_id: str, enabled: bool | None = None,
+        owner_id: str | None = None, cut_enabled: bool | None = None,
+    ) -> tuple[Channel, bool]:
         channel_id = parse_channel_id(channel_id)
         if owner_id is not None and owner_id not in self.owner_ids:
             raise ChannelStoreError("INVALID_OWNER_ID", "Thành viên không hợp lệ.")
@@ -117,11 +127,37 @@ class ChannelStore:
                 if channel.channel_id == channel_id:
                     new_enabled = channel.enabled if enabled is None else enabled
                     changed_to_enabled = not channel.enabled and new_enabled
-                    updated = Channel(channel.channel_id, channel.name, new_enabled, owner_id or channel.owner_id)
+                    updated = Channel(
+                        channel.channel_id, channel.name, new_enabled,
+                        owner_id or channel.owner_id,
+                        channel.cut_enabled if cut_enabled is None else cut_enabled,
+                    )
                     channels[index] = updated
                     self._save_unlocked(channels)
                     return updated, changed_to_enabled
         raise ChannelStoreError("CHANNEL_NOT_FOUND", "Không tìm thấy kênh.", 404)
+
+    def migrate_notify_channels(self, rows) -> dict[str, int]:
+        with self._lock:
+            channels = self._load_unlocked()
+            existing = {channel.channel_id for channel in channels}
+            raw = json.loads(self.path.read_text(encoding="utf-8")) if self.path.exists() else []
+            result = {"imported": 0, "conflicts": 0, "unresolved": 0}
+            for row in rows:
+                if row["channel_id"] in existing:
+                    result["conflicts"] += 1
+                elif row["owner_id"] not in self.owner_ids:
+                    result["unresolved"] += 1
+                else:
+                    channels.append(Channel(
+                        row["channel_id"], row["name"], bool(row["enabled"]),
+                        row["owner_id"], bool(row["cut_enabled"]),
+                    ))
+                    existing.add(row["channel_id"])
+                    result["imported"] += 1
+            if result["imported"] or any("cut_enabled" not in item for item in raw):
+                self._save_unlocked(channels)
+            return result
 
     def remove(self, channel_id: str) -> Channel:
         channel_id = parse_channel_id(channel_id)
