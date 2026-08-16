@@ -109,6 +109,15 @@ def test_invalid_duplicate_unlocked_and_mismatch_are_rejected(settings):
     assert assign(mismatch_client).json()["error"] == "ACCOUNT_MISMATCH"
 
 
+def test_legacy_minha_profile_without_identity_fields_can_be_mapped(settings):
+    legacy_profile = {"id": PROFILE_ID, "name": "TN001UK"}
+    client, _state, _store = client_for(settings, FakeMinHa([legacy_profile]))
+    assigned = assign(client)
+    assert assigned.status_code == 200
+    assert assigned.json()["minha_profile_id"] == PROFILE_ID
+    assert client.get(f"/api/channels/{CHANNEL_ID}/publish-target").json()["status"] == "PROBE_ERROR"
+
+
 def test_resolver_uses_live_minha_state_and_keeps_mapping_offline(settings):
     client, _state, store = client_for(settings)
     assert assign(client).status_code == 200
@@ -161,6 +170,19 @@ def test_channel_rename_preserves_mapping_and_job_snapshots_profile_id(settings,
         owner_id="member_1", team_members=typed_members, minha_profile_id=PROFILE_ID,
     ) == "NEW"
     assert state.processing_jobs()[0]["minha_profile_id"] == PROFILE_ID
+
+
+def test_channel_toggles_preserve_mapping_and_failed_patch_does_not_erase_it(settings):
+    client, _state, _store = client_for(settings)
+    assert assign(client).status_code == 200
+    for payload in ({"cut_enabled": False}, {"enabled": False}, {"enabled": True}):
+        response = client.patch(f"/api/channels/{CHANNEL_ID}", json=payload)
+        assert response.status_code == 200
+        assert response.json()["minha_profile_id"] == PROFILE_ID
+
+    failed = assign(client, "missing")
+    assert failed.status_code == 404
+    assert client.get("/api/channels").json()[0]["minha_profile_id"] == PROFILE_ID
 
 
 def test_dashboard_contains_live_profile_id_selector(settings):

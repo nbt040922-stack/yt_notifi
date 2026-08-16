@@ -526,7 +526,7 @@ def create_app(
                     {"error": "MINHA_PROFILE_NOT_FOUND", "message": "MinHa profile not found."},
                     status_code=404,
                 )
-            if not profile.get("expected_tiktok_uid"):
+            if "expected_tiktok_uid" in profile and not profile["expected_tiktok_uid"]:
                 return JSONResponse(
                     {"error": "UID_UNLOCKED", "message": "Lock the expected TikTok UID before assignment."},
                     status_code=409,
