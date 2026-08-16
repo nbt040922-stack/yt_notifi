@@ -29,6 +29,7 @@ def create_processing_job(
     owner_id: str,
     members: list[TeamMember],
     nas_output_root: Path | None,
+    minha_profile_id: str | None = None,
 ) -> bool:
     member = next((item for item in members if item.id == owner_id), None)
     member_root = nas_output_root / member.nas_folder if nas_output_root and member else None
@@ -51,6 +52,7 @@ def create_processing_job(
         output_dir=str(output_dir) if output_dir else "",
         status=status,
         error=error,
+        minha_profile_id=minha_profile_id,
     )
     if created:
         logger.info("JOB_%s video_id=%s", status, event.video_id)

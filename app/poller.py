@@ -115,6 +115,7 @@ class ChannelPoller:
                 create_job=channel.channel_id in self.processing_ids,
                 owner_id=channel.owner_id,
                 team_members=self.team_members,
+                minha_profile_id=channel.minha_profile_id,
             )
             results.append((event, classification))
             if classification == "NEW":

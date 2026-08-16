@@ -16,6 +16,12 @@ from .cleanup_worker import CleanupWorker
 from .config import Channel, Settings, load_team_members
 from .detector import resume_notifications
 from .download_worker import DownloadHandoffWorker
+from .minha import (
+    MinHaClient,
+    MinHaUnavailable,
+    public_profile,
+    resolve_channel_publish_target,
+)
 from .nas_sync_worker import NasSyncWorker
 from .poller import ChannelPoller
 from .process_worker import ProcessHandoffWorker
@@ -42,6 +48,12 @@ class ChannelUpdate(BaseModel):
     enabled: bool | None = None
     cut_enabled: StrictBool | None = None
     name: str | None = None
+
+
+class ChannelMinHaProfileUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    minha_profile_id: str | None = Field(default=None, max_length=200)
 
 
 class ChannelResolve(BaseModel):
@@ -91,6 +103,7 @@ def create_app(
     channel_store: ChannelStore | None = None,
     channel_resolver=None,
     processing_control=None,
+    minha_client=None,
 ) -> FastAPI:
     settings = settings or Settings.from_env()
     team_members = load_team_members(settings.team_members_file)
@@ -98,6 +111,7 @@ def create_app(
     notifier = notifier or TelegramNotifier(settings.telegram_bot_token, settings.telegram_chat_id)
     channel_store = channel_store or ChannelStore(settings.channels_file, team_members)
     channel_resolver = channel_resolver or resolve_channel
+    minha_client = minha_client or MinHaClient(settings.minha_base_url, settings.minha_auth_token)
     def processing_channel_ids():
         try:
             return {channel.channel_id for channel in channel_store.enabled() if channel.cut_enabled}
@@ -187,6 +201,7 @@ def create_app(
             "enabled": channel.enabled,
             "owner_id": channel.owner_id,
             "cut_enabled": channel.cut_enabled,
+            "minha_profile_id": channel.minha_profile_id,
             "last_poll_at": row["last_poll_at"] if row else None,
             "last_success_at": row["last_success_at"] if row else None,
             "latest_seen_video_id": row["latest_seen_video_id"] if row else None,
@@ -238,6 +253,20 @@ def create_app(
     @app.get("/api/channels")
     def api_channels() -> list[dict]:
         return [channel_payload(channel) for channel in channel_store.list()]
+
+    @app.get("/api/minha/profiles")
+    def api_minha_profiles() -> list[dict]:
+        try:
+            return [public_profile(profile) for profile in minha_client.list_profiles()]
+        except MinHaUnavailable:
+            return JSONResponse(
+                {"error": "MINHA_UNAVAILABLE", "message": "MinHa is unavailable."},
+                status_code=503,
+            )
+
+    @app.get("/api/channels/{channel_id}/publish-target")
+    def api_channel_publish_target(channel_id: str) -> dict:
+        return resolve_channel_publish_target(channel_id, channel_store, minha_client)
 
     @app.get("/api/team-members")
     def api_team_members() -> list[dict]:
@@ -476,6 +505,38 @@ def create_app(
         if changed_to_enabled:
             state.reset_poll_baseline(channel.channel_id)
         return channel_payload(channel)
+
+    @app.patch("/api/channels/{channel_id}/minha-profile")
+    def update_channel_minha_profile(
+        channel_id: str, payload: ChannelMinHaProfileUpdate,
+    ) -> dict:
+        profile_id = payload.minha_profile_id.strip() if payload.minha_profile_id else None
+        if payload.minha_profile_id is not None and not profile_id:
+            raise ChannelStoreError("INVALID_MINHA_PROFILE_ID", "MinHa profile ID is invalid.")
+        if profile_id:
+            try:
+                profile = minha_client.get_profile(profile_id)
+            except MinHaUnavailable:
+                return JSONResponse(
+                    {"error": "MINHA_UNAVAILABLE", "message": "MinHa is unavailable."},
+                    status_code=503,
+                )
+            if not profile:
+                return JSONResponse(
+                    {"error": "MINHA_PROFILE_NOT_FOUND", "message": "MinHa profile not found."},
+                    status_code=404,
+                )
+            if not profile.get("expected_tiktok_uid"):
+                return JSONResponse(
+                    {"error": "UID_UNLOCKED", "message": "Lock the expected TikTok UID before assignment."},
+                    status_code=409,
+                )
+            if profile.get("tiktok_account_match") == "MISMATCH":
+                return JSONResponse(
+                    {"error": "ACCOUNT_MISMATCH", "message": "MinHa profile has a TikTok account mismatch."},
+                    status_code=409,
+                )
+        return channel_payload(channel_store.set_minha_profile(channel_id, profile_id))
 
     @app.delete("/api/channels/{channel_id}")
     def delete_channel(channel_id: str) -> dict[str, str]:

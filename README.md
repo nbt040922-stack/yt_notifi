@@ -37,7 +37,17 @@ PORT=8787
 YTDLP_PATH=
 POLL_INTERVAL_SECONDS=10
 POLL_MAX_CONCURRENCY=3
+MINHA_BASE_URL=http://127.0.0.1:8080
+MINHA_AUTH_TOKEN=
 ```
+
+## MinHa profile mapping
+
+Dashboard cho phép gán mỗi kênh YouTube cho một MinHa profile bằng ID bền vững.
+Tên profile, expected/current TikTok UID và account-match state luôn được đọc trực
+tiếp từ MinHa; YT_NOTIFI chỉ lưu `minha_profile_id`. Nếu MinHa tạm thời không khả
+dụng thì mapping vẫn được giữ nguyên. Thao tác mapping không launch browser, probe
+account hay publish nội dung.
 
 Đặt `yt-dlp.exe` trong `tools\`, khai báo `YTDLP_PATH`, hoặc thêm `yt-dlp` vào `PATH`. Thiếu `yt-dlp` là lỗi khởi động.
 

@@ -49,6 +49,7 @@ def handle_detected_video(
     create_job: bool = True,
     owner_id: str | None = None,
     team_members: list[TeamMember] | None = None,
+    minha_profile_id: str | None = None,
 ) -> str:
     if not state.record_event(event, baseline=baseline):
         logger.debug("POLL_DUPLICATE video_id=%s", event.video_id)
@@ -59,7 +60,8 @@ def handle_detected_video(
     if create_job:
         try:
             create_processing_job(
-                state, event, channel_name, owner_id or "", team_members or [], nas_output_root
+                state, event, channel_name, owner_id or "", team_members or [], nas_output_root,
+                minha_profile_id,
             )
         except Exception as exc:
             logger.error("JOB_CREATE_FAILED video_id=%s error_type=%s", event.video_id, type(exc).__name__)

@@ -80,6 +80,7 @@ class ChannelStore:
                 "channel_id": channel.channel_id, "name": channel.name,
                 "enabled": channel.enabled, "owner_id": channel.owner_id,
                 "cut_enabled": channel.cut_enabled,
+                "minha_profile_id": channel.minha_profile_id,
             }
             for channel in channels
         ]
@@ -137,6 +138,7 @@ class ChannelStore:
                         channel.channel_id, display_name or channel.name, new_enabled,
                         owner_id or channel.owner_id,
                         channel.cut_enabled if cut_enabled is None else cut_enabled,
+                        channel.minha_profile_id,
                     )
                     channels[index] = updated
                     self._save_unlocked(channels)
@@ -164,6 +166,30 @@ class ChannelStore:
             if result["imported"] or any("cut_enabled" not in item for item in raw):
                 self._save_unlocked(channels)
             return result
+
+    def set_minha_profile(self, channel_id: str, profile_id: str | None) -> Channel:
+        channel_id = parse_channel_id(channel_id)
+        with self._lock:
+            channels = self._load_unlocked()
+            if profile_id and any(
+                item.channel_id != channel_id and item.minha_profile_id == profile_id
+                for item in channels
+            ):
+                raise ChannelStoreError(
+                    "MINHA_PROFILE_ALREADY_ASSIGNED",
+                    "MinHa profile này đã được gán cho kênh YouTube khác.",
+                    409,
+                )
+            for index, channel in enumerate(channels):
+                if channel.channel_id == channel_id:
+                    updated = Channel(
+                        channel.channel_id, channel.name, channel.enabled,
+                        channel.owner_id, channel.cut_enabled, profile_id,
+                    )
+                    channels[index] = updated
+                    self._save_unlocked(channels)
+                    return updated
+        raise ChannelStoreError("CHANNEL_NOT_FOUND", "Không tìm thấy kênh.", 404)
 
     def remove(self, channel_id: str) -> Channel:
         channel_id = parse_channel_id(channel_id)

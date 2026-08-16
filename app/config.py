@@ -36,6 +36,8 @@ class Settings:
     ytdownload_bridge_url: str = "http://127.0.0.1:8790"
     processing_work_root: Path | None = None
     silence_cutter_bridge_url: str = "http://127.0.0.1:8791"
+    minha_base_url: str = "http://127.0.0.1:8080"
+    minha_auth_token: str = ""
     silence_cutter_root: Path = ROOT.parent / "Silence_cutter"
     qwen_ready_timeout_seconds: int = 120
     contentops_cleanup_dry_run: bool = True
@@ -70,6 +72,8 @@ class Settings:
             ytdownload_bridge_url=os.getenv("YTDOWNLOAD_BRIDGE_URL", "http://127.0.0.1:8790").rstrip("/"),
             processing_work_root=Path(processing_work_root) if processing_work_root else None,
             silence_cutter_bridge_url=os.getenv("SILENCE_CUTTER_BRIDGE_URL", "http://127.0.0.1:8791").rstrip("/"),
+            minha_base_url=os.getenv("MINHA_BASE_URL", "http://127.0.0.1:8080").rstrip("/"),
+            minha_auth_token=os.getenv("MINHA_AUTH_TOKEN", ""),
             silence_cutter_root=Path(os.getenv("SILENCE_CUTTER_ROOT", ROOT.parent / "Silence_cutter")),
             qwen_ready_timeout_seconds=max(30, int(os.getenv("QWEN_READY_TIMEOUT_SECONDS", "120"))),
             contentops_cleanup_dry_run=os.getenv(
@@ -85,6 +89,7 @@ class Channel:
     enabled: bool = True
     owner_id: str = "member_1"
     cut_enabled: bool = True
+    minha_profile_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -141,6 +146,7 @@ def load_channels(path: Path, owner_ids: set[str] | None = None, default_owner: 
         channels.append(Channel(
             channel_id, str(item.get("name") or channel_id), bool(item.get("enabled", True)),
             owner_id, bool(item.get("cut_enabled", True)),
+            str(item["minha_profile_id"]) if item.get("minha_profile_id") else None,
         ))
     return channels
 
