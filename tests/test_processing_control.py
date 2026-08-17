@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from app.processing_control import ProcessingControl, ProcessingControlStore
+import pytest
+
+from app.processing_control import ProcessingControl, ProcessingControlStore, QwenProcessManager
 from app.process_worker import ProcessHandoffWorker
 from app.state import StateStore
 from tests.test_process_worker import Bridge, Response, downloaded_job, payload
@@ -148,3 +150,98 @@ def test_off_never_stops_unowned_process(settings):
     engine.tick(NOW)
     assert manager.stopped == []
     assert engine.snapshot()["qwen_status"] == "OFF"
+
+
+def test_launcher_off_state_remains_stably_off(settings):
+    manager = Manager()
+    engine = control(settings, manager=manager)
+    engine.store.write({
+        **engine.store.default(), "silence_engine_enabled": False, "qwen_status": "OFF",
+        "off_requested_at": None,
+    })
+
+    engine.tick(NOW)
+    assert engine.snapshot()["qwen_status"] == "OFF"
+    assert manager.stopped == []
+
+
+@pytest.mark.parametrize("qwen_status", ["READY", "STARTING", "ERROR"])
+def test_every_enabled_state_requests_off(settings, qwen_status):
+    engine = control(settings)
+    engine.store.write({
+        **engine.store.default(), "silence_engine_enabled": True,
+        "qwen_status": qwen_status,
+    })
+
+    requested = engine.request(False)
+    assert requested["silence_engine_enabled"] is False
+    assert requested["qwen_status"] == "STOPPING"
+
+
+def test_on_error_turns_off_and_stops_owned_worker(settings):
+    manager = Manager()
+    engine = control(settings, manager=manager)
+    engine.store.write({
+        **engine.store.default(), "silence_engine_enabled": True, "qwen_status": "ERROR",
+        "qwen_pid": 4321, "qwen_started_at": NOW.isoformat(), "error": "QWEN_START_TIMEOUT",
+    })
+
+    requested = engine.request(False)
+    assert requested["silence_engine_enabled"] is False
+    assert requested["qwen_status"] == "STOPPING"
+    off_requested = datetime.fromisoformat(engine.store.read()["off_requested_at"])
+    engine.tick(off_requested + timedelta(seconds=3))
+    assert engine.snapshot()["qwen_status"] == "OFF"
+    assert len(manager.stopped) == 1
+
+
+def test_off_error_can_start_clean_retry(settings):
+    manager = Manager()
+    engine = control(settings, manager=manager)
+    engine.store.write({
+        **engine.store.default(), "silence_engine_enabled": False, "qwen_status": "ERROR",
+        "error": "QWEN_PORT_STILL_OPEN",
+    })
+    started = engine.request(True)
+    assert started["silence_engine_enabled"] is True
+    assert started["qwen_status"] == "STARTING"
+    assert started["error"] is None and len(manager.started) == 1
+
+
+def test_off_reports_error_while_qwen_port_remains_open(settings):
+    manager = Manager()
+    manager.health_value = {"status": "ERROR"}
+    engine = control(settings, manager=manager)
+    engine.store.write({
+        **engine.store.default(), "silence_engine_enabled": False, "qwen_status": "STOPPING",
+        "qwen_pid": 4321, "qwen_started_at": NOW.isoformat(),
+        "off_requested_at": (NOW - timedelta(seconds=3)).isoformat(),
+    })
+    engine.tick(NOW)
+    snapshot = engine.snapshot()
+    assert snapshot["silence_engine_enabled"] is False
+    assert snapshot["qwen_status"] == "ERROR"
+    assert snapshot["error"] == "QWEN_PORT_STILL_OPEN"
+
+
+def test_dynamic_qwen_start_supplies_existing_default_model(settings, monkeypatch):
+    root = settings.silence_cutter_root
+    python = root / ".venv_asr_test" / "Scripts" / "python.exe"
+    python.parent.mkdir(parents=True)
+    python.touch()
+    model = root / "local_models" / "Qwen2.5-VL-7B-Instruct-AWQ"
+    model.mkdir(parents=True)
+    captured = {}
+
+    class Process:
+        pid = 4321
+
+    def popen(command, **kwargs):
+        captured.update(command=command, **kwargs)
+        return Process()
+
+    monkeypatch.delenv("SEMANTIC_QWEN_MODEL", raising=False)
+    monkeypatch.setattr("app.processing_control.subprocess.Popen", popen)
+    pid, _ = QwenProcessManager(settings).start()
+    assert pid == 4321
+    assert captured["env"]["SEMANTIC_QWEN_MODEL"] == str(model)

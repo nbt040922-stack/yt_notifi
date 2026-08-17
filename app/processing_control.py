@@ -95,10 +95,15 @@ class QwenProcessManager:
         logs.mkdir(exist_ok=True)
         stdout = (logs / "qwen-worker.stdout.log").open("ab")
         stderr = (logs / "qwen-worker.stderr.log").open("ab")
+        environment = os.environ.copy()
+        default_model = root / "local_models" / "Qwen2.5-VL-7B-Instruct-AWQ"
+        if "SEMANTIC_QWEN_MODEL" not in environment and default_model.is_dir():
+            environment["SEMANTIC_QWEN_MODEL"] = str(default_model)
         try:
             process = subprocess.Popen(
                 [str(python), "-m", "qwen_worker.supervisor"], cwd=root,
                 stdout=stdout, stderr=stderr,
+                env=environment,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
         finally:
@@ -246,7 +251,17 @@ class ProcessingControl:
         self.store.write(value)
 
     def _tick_disabled(self, value: dict[str, Any], now: datetime) -> None:
-        requested = parse_time(value.get("off_requested_at")) or now
+        requested = parse_time(value.get("off_requested_at"))
+        if requested is None and value.get("qwen_status") == "OFF":
+            if self.manager.health():
+                value.update(qwen_status="ERROR", error="QWEN_PORT_STILL_OPEN")
+            else:
+                value.update(qwen_pid=None, qwen_started_at=None, error=None)
+            self.store.write(value)
+            return
+        if requested is None:
+            requested = now
+            value["off_requested_at"] = now.isoformat()
         if self.state.active_process_job_count() or (now - requested).total_seconds() < 2:
             value.update(qwen_status="STOPPING")
             self.store.write(value)

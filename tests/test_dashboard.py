@@ -74,6 +74,25 @@ def test_dashboard_processing_control_api(settings):
     ).status_code == 400
 
 
+def test_dashboard_engine_toggle_is_deterministic_and_race_safe(settings):
+    html = TestClient(create_app(settings)).get("/").text
+    assert "const enable = !processingControl.silence_engine_enabled;" in html
+    assert "|| processingControl.qwen_status === 'ERROR'" not in html
+    assert "engineRequestInFlight || processingControl.qwen_status === 'STOPPING'" in html
+    assert "engineRequestInFlight = true" in html
+    assert "engineRequestInFlight = false" in html
+
+
+def test_dashboard_engine_labels_and_error_detail_are_explicit(settings):
+    html = TestClient(create_app(settings)).get("/").text
+    assert "`ON / ${control.qwen_status}`" in html
+    assert "`OFF / ${control.qwen_status}`" in html
+    assert "control.qwen_status === 'OFF' ? 'OFF'" in html
+    assert "control.qwen_status === 'ERROR'" in html
+    assert "id=\"engine-error\"" in html
+    assert "String(control.error || 'QWEN_ERROR')" in html
+
+
 def test_get_channels_includes_runtime_state(settings):
     client, state = api(settings)
     waiting = client.get("/api/channels").json()[0]
