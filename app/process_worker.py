@@ -20,11 +20,12 @@ BACKOFF_SECONDS = (5, 10, 20, 30, 60)
 
 
 class ProcessHandoffWorker:
-    def __init__(self, settings: Settings, state: StateStore, client=None, control=None):
+    def __init__(self, settings: Settings, state: StateStore, client=None, control=None, publisher=None):
         self.settings = settings
         self.state = state
         self.client = client or httpx.Client(timeout=5)
         self.control = control
+        self.publisher = publisher
         parsed = urlsplit(settings.silence_cutter_bridge_url)
         self.bridge_url = settings.silence_cutter_bridge_url.rstrip("/")
         self.bridge_valid = (
@@ -51,6 +52,9 @@ class ProcessHandoffWorker:
             if self.control and not self.control.is_ready():
                 self.state.pause_process_job(job["id"], self.control.pause_reason())
                 return
+            bridge_health = self._bridge_health()
+            if not bridge_health[0]:
+                return self._pending(job, now, bridge_health[1])
             try:
                 processing_output_dir = self._processing_output_dir(job)
             except RuntimeError as exc:
@@ -77,6 +81,29 @@ class ProcessHandoffWorker:
             return self._failed(job, error)
         self._apply(job, response.json())
 
+    def _bridge_health(self) -> tuple[bool, str]:
+        try:
+            health_method = getattr(self.client, "health", None)
+            if callable(health_method):
+                payload = health_method()
+                if isinstance(payload, dict) and payload.get("status") in {"READY", "ok"}:
+                    if payload.get("enhanced_ready", True):
+                        return True, ""
+                    return False, "BRIDGE_NOT_READY:QWEN_NOT_READY"
+                return False, f"BRIDGE_NOT_READY:{(payload or {}).get('status', 'UNKNOWN')}"
+            response = self.client.get(f"{self.bridge_url}/health")
+            try:
+                payload = response.json()
+            except Exception:
+                payload = {}
+            if response.status_code == 200 and payload.get("status") in {"READY", "ok"}:
+                if payload.get("enhanced_ready", True):
+                    return True, ""
+                return False, "BRIDGE_NOT_READY:QWEN_NOT_READY"
+            return False, f"BRIDGE_NOT_READY:{payload.get('status') or response.status_code}"
+        except Exception:
+            return False, "BRIDGE_NOT_READY:UNREACHABLE"
+
     def _processing_output_dir(self, job) -> Path:
         existing = job["processing_output_dir"]
         if existing:
@@ -96,12 +123,15 @@ class ProcessHandoffWorker:
             exact_files = [str(value) for value in payload.get("processed_files") or [] if str(value)]
             if not exact_files or not all(Path(value).is_file() for value in exact_files):
                 return self._failed(job, "MISSING_PROCESSED_FILES", process_state, external_id)
-            return self.state.update_process_job(
+            self.state.update_process_job(
                 job["id"], status="COMPLETED", external_id=external_id,
                 process_state=process_state, progress=100,
                 processed_file_path=exact_files[0],
                 processed_files_json=json.dumps(exact_files, ensure_ascii=False),
             )
+            if self.publisher:
+                self.publisher.handle_processing_done(job["id"])
+            return None
         if process_state == "FAILED":
             return self._failed(job, str(payload.get("error") or "PROCESSING_FAILED"), process_state, external_id)
         status = STATE_MAP.get(process_state)

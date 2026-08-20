@@ -124,7 +124,7 @@ function Wait-ServiceHealth(
     [scriptblock]$HealthProbe = {
         param($probeUrl)
         $health = Invoke-RestMethod $probeUrl -TimeoutSec 2
-        return $health.status -eq "ok"
+        return $health.status -in @("ok", "READY")
     }
 ) {
     $timer = [Diagnostics.Stopwatch]::StartNew()

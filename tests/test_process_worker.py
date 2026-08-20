@@ -38,11 +38,27 @@ class Bridge:
         self.gets.append(url)
         return self._next()
 
+    def health(self):
+        return {"status": "READY", "enhanced_ready": True}
+
     def _next(self):
         value = next(self.responses)
         if isinstance(value, Exception):
             raise value
         return value
+
+
+class NotReadyBridge(Bridge):
+    def health(self):
+        return {"status": "NOT_READY", "enhanced_ready": False}
+
+
+class PublisherHook:
+    def __init__(self):
+        self.calls = []
+
+    def handle_processing_done(self, processing_job_id):
+        self.calls.append(processing_job_id)
 
 
 def downloaded_job(settings, tmp_path):
@@ -85,6 +101,16 @@ def test_downloaded_job_submits_once_and_tracks_existing(settings, tmp_path):
     assert (job["status"], job["process_progress"]) == ("PROCESSING", 42)
 
 
+def test_bridge_not_ready_keeps_job_pending_without_post(settings, tmp_path):
+    state, _ = downloaded_job(settings, tmp_path)
+    bridge = NotReadyBridge([])
+    ProcessHandoffWorker(settings, state, bridge).tick(datetime(2026, 8, 12, tzinfo=timezone.utc))
+    job = state.processing_jobs()[0]
+    assert job["status"] == "PROCESS_PENDING"
+    assert job["process_error"] == "BRIDGE_NOT_READY:NOT_READY"
+    assert bridge.posts == []
+
+
 def test_bridge_offline_restart_retries_same_enhanced_handoff(settings, tmp_path):
     state, _ = downloaded_job(settings, tmp_path)
     bridge = Bridge([httpx.ConnectError("offline"), Response(payload("PROCESSING"))])
@@ -121,6 +147,20 @@ def test_done_persists_exact_part_paths(settings, tmp_path):
     job = state.processing_jobs()[0]
     assert (job["status"], job["processed_file_path"]) == ("COMPLETED", str(exact[0]))
     assert json.loads(job["processed_files_json"]) == [str(path) for path in exact]
+
+
+def test_done_triggers_publisher_once_at_completion_boundary(settings, tmp_path):
+    state, _ = downloaded_job(settings, tmp_path)
+    exact = tmp_path / "nas" / "PART_1.mp4"
+    exact.parent.mkdir()
+    exact.write_bytes(b"part")
+    publisher = PublisherHook()
+    worker = ProcessHandoffWorker(
+        settings, state, Bridge([Response(payload("DONE", processed_files=[str(exact)]))]),
+        publisher=publisher,
+    )
+    worker.tick()
+    assert publisher.calls == [state.processing_jobs()[0]["id"]]
 
 
 def test_done_requires_every_returned_part_to_exist(settings, tmp_path):

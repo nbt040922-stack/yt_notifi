@@ -83,6 +83,16 @@ function Assert-Healthy([Diagnostics.Process]$Process, [string]$Name, [string]$U
     Write-LauncherLog $launcherLog "$Name health PASS"
 }
 
+function Assert-SilenceIdentity([string]$Url, [string]$ExpectedRoot, [string]$ExpectedPython) {
+    $health = Invoke-RestMethod $Url -TimeoutSec 3
+    if ($health.status -ne "READY" -or
+        [IO.Path]::GetFullPath([string]$health.project_root) -ne [IO.Path]::GetFullPath($ExpectedRoot) -or
+        [IO.Path]::GetFullPath([string]$health.python_executable) -ne [IO.Path]::GetFullPath($ExpectedPython)) {
+        throw "SILENCE CUTTER identity mismatch"
+    }
+    Write-LauncherLog $launcherLog "Silence identity PASS pid=$($health.bridge_pid) build=$($health.bridge_build)"
+}
+
 try {
     Import-DotEnv (Join-Path $root ".env")
     $control = Read-RuntimeState $controlPath
@@ -97,6 +107,9 @@ try {
     $silenceRoot = if ($env:SILENCE_CUTTER_ROOT) { $env:SILENCE_CUTTER_ROOT } else { Join-Path $driveRoot "Silence_cutter" }
     $electron = Join-Path $ytdownloadRoot "node_modules\electron\dist\electron.exe"
     $silencePython = Join-Path $silenceRoot ".venv_asr_test\Scripts\python.exe"
+    $env:SILENCE_PYTHON = $silencePython
+    $env:SILENCE_QWEN_ENDPOINT = "http://127.0.0.1:8792"
+    $env:CONTENTOPS_ENFORCE_RUNTIME = "1"
     $watcherPython = Get-VenvPython $root
     foreach ($required in @($electron, $silencePython)) {
         if (-not (Test-Path -LiteralPath $required -PathType Leaf)) { throw "Runtime missing: $required" }
@@ -154,6 +167,7 @@ try {
     }
     Assert-Healthy $ytdownload "YTDOWNLOAD" "http://127.0.0.1:8790/health"
     Assert-Healthy $silence "SILENCE CUTTER" "http://127.0.0.1:8791/health"
+    Assert-SilenceIdentity "http://127.0.0.1:8791/health" $silenceRoot $silencePython
 
     $bindHost = if ($env:YT_NOTIFI_BIND_HOST) { $env:YT_NOTIFI_BIND_HOST } else { "127.0.0.1" }
     $port = if ($env:YT_NOTIFI_PORT) { [int]$env:YT_NOTIFI_PORT } else { 8787 }
