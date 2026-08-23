@@ -5,7 +5,6 @@ import re
 from pathlib import Path
 
 from .models import VideoEvent
-from .config import TeamMember
 from .state import StateStore
 
 logger = logging.getLogger("yt_notifi")
@@ -27,19 +26,23 @@ def create_processing_job(
     event: VideoEvent,
     channel_name: str,
     owner_id: str,
-    members: list[TeamMember],
-    nas_output_root: Path | None,
+    members=None,
+    nas_output_root: Path | None = None,
     minha_profile_id: str | None = None,
+    remote_processing: bool = False,
 ) -> bool:
-    member = next((item for item in members if item.id == owner_id), None)
-    member_root = nas_output_root / member.nas_folder if nas_output_root and member else None
-    output_dir = member_root / sanitize_folder_name(channel_name) if member_root else None
-    status, error = "QUEUED", None
-    if not member:
+    member = next((item for item in (members or []) if item.id == owner_id), None)
+    if members and not member:
+        output_dir = None
         status, error = "FAILED", "OWNER_CONFIG_MISSING"
-    elif not output_dir:
+    else:
+        member_root = nas_output_root / member.nas_folder if nas_output_root and member else None
+        output_root = member_root if member else nas_output_root
+        output_dir = output_root / sanitize_folder_name(channel_name) if output_root else None
+        status, error = "QUEUED", None
+    if status == "QUEUED" and not output_dir and not remote_processing:
         status, error = "FAILED", "NAS_UNAVAILABLE"
-    elif member_root.is_dir():
+    elif output_dir and output_dir.parent.is_dir():
         try:
             output_dir.mkdir(exist_ok=True)
         except OSError:

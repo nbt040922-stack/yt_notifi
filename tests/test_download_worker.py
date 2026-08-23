@@ -76,6 +76,20 @@ def test_queued_job_submitted_once_and_handoff_persisted(settings, tmp_path):
     assert bridge.posts[0][1]["final_output_dir"] == str(tmp_path / "nas")
 
 
+@pytest.mark.skip(reason="legacy remote-download shortcut removed; manual API uses YTDOWNLOAD :8790")
+def test_remote_processing_skips_local_download_handoff(settings, tmp_path):
+    settings = replace(settings, processing_work_root=None)
+    state = StateStore(settings.state_db)
+    remote_video_id = "remote12345"
+    event = VideoEvent(remote_video_id, CHANNEL_ID, "Video", "", "", f"https://www.youtube.com/watch?v={remote_video_id}")
+    assert state.create_processing_job(event, "Remote", "", "QUEUED", None)
+    worker = DownloadHandoffWorker(settings, state, remote_processing=True)
+    worker.tick()
+    job = state.processing_jobs()[0]
+    assert job["status"] == "PROCESS_PENDING"
+    assert job["download_state"] == "REMOTE"
+
+
 def test_bridge_unavailable_retries_then_recovers(settings, tmp_path):
     settings, state = queued_job(settings, tmp_path)
     bridge = Bridge([httpx.ConnectError("offline"), Response(payload("DOWNLOADING", progress_percent=12))])

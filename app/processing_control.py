@@ -50,10 +50,13 @@ class ProcessingControlStore:
                 value = json.loads(self.path.read_text(encoding="utf-8-sig"))
                 if not isinstance(value, dict) or not isinstance(value.get("silence_engine_enabled"), bool):
                     raise ValueError("invalid processing control")
+                # Silence Cutter/Qwen are external, always-warm services.  The
+                # per-channel cut_enabled flag is the sole routing switch.
+                value["silence_engine_enabled"] = True
                 return value
             except (OSError, ValueError, TypeError):
                 return {
-                    "silence_engine_enabled": False, "qwen_status": "ERROR",
+                    "silence_engine_enabled": True, "qwen_status": "ERROR",
                     "qwen_pid": None, "qwen_started_at": None,
                     "error": "PROCESSING_CONTROL_INVALID", "off_requested_at": None,
                 }
@@ -81,8 +84,8 @@ class QwenProcessManager:
 
     def health(self) -> dict[str, Any] | None:
         try:
-            response = self.client.get("http://127.0.0.1:8792/health")
-            return response.json() if response.status_code == 200 else None
+            response = self.client.get(f"{self.settings.silence_cutter_bridge_url}/health")
+            return response.json()
         except Exception:
             return None
 
@@ -176,21 +179,13 @@ class ProcessingControl:
     def request(self, enabled: bool) -> dict[str, Any]:
         with self._lock:
             value = self.store.read()
-            if enabled:
-                if value["silence_engine_enabled"] and value.get("qwen_status") != "ERROR":
-                    self.tick()
-                    return self.snapshot()
-                if value.get("qwen_status") == "ERROR" and value.get("qwen_pid"):
-                    self.manager.stop(value.get("qwen_pid"), value.get("qwen_started_at"))
-                value.update(
-                    silence_engine_enabled=True, qwen_status="STARTING", qwen_pid=None,
-                    qwen_started_at=None, error=None, off_requested_at=None,
-                )
-            else:
-                value.update(
-                    silence_engine_enabled=False, qwen_status="STOPPING",
-                    off_requested_at=utc_now(), error=None,
-                )
+            value.update(
+                silence_engine_enabled=enabled,
+                error=None,
+                off_requested_at=None,
+                qwen_pid=None,
+                qwen_started_at=None,
+            )
             self.store.write(value)
             self.tick()
             return self.snapshot()
@@ -206,74 +201,27 @@ class ProcessingControl:
 
     def _tick_enabled(self, value: dict[str, Any], now: datetime) -> None:
         health = self.manager.health()
-        if health and health.get("status") == "READY" and health.get("model_loaded") and health.get("warmed_up"):
-            if not value.get("qwen_pid"):
-                adopted = self.manager.adopt_runtime()
-                if adopted:
-                    value.update(qwen_pid=adopted[0], qwen_started_at=adopted[1])
-                else:
-                    value.update(qwen_status="ERROR", error="UNOWNED_QWEN_PROCESS")
-                    self.store.write(value)
-                    return
+        scheduler_ready = health and health.get("status") == "READY"
+        qwen_ready = health and (
+            health.get("qwen_status") == "READY"
+            or health.get("enhanced_ready") is True
+            or (health.get("model_loaded") and health.get("warmed_up"))
+        )
+        if scheduler_ready and qwen_ready:
             value.update(qwen_status="READY", error=None)
             self.store.write(value)
             return
-        if health and health.get("status") == "ERROR":
-            value.update(qwen_status="ERROR", error=str(health.get("error") or "QWEN_START_FAILED")[:500])
-            self.store.write(value)
-            return
-        if value.get("qwen_pid") and not health and not self.manager.is_owned(
-            value.get("qwen_pid"), value.get("qwen_started_at")
-        ):
-            value.update(qwen_pid=None, qwen_started_at=None)
-        if not value.get("qwen_pid"):
-            adopted = self.manager.adopt_runtime()
-            if adopted:
-                value.update(qwen_pid=adopted[0], qwen_started_at=adopted[1])
-            elif health:
-                value.update(qwen_status="ERROR", error="UNOWNED_QWEN_PROCESS")
-                self.store.write(value)
-                return
-            else:
-                try:
-                    pid, started = self.manager.start()
-                    value.update(qwen_pid=pid, qwen_started_at=started, qwen_status="STARTING", error=None)
-                except Exception as exc:
-                    value.update(qwen_status="ERROR", error=str(exc)[:500])
-                self.store.write(value)
-                return
-        status = str((health or {}).get("status") or "STARTING")
-        started = parse_time(value.get("qwen_started_at"))
-        if started and (now - started).total_seconds() > self.settings.qwen_ready_timeout_seconds:
-            value.update(qwen_status="ERROR", error="QWEN_START_TIMEOUT")
-        else:
-            value.update(qwen_status=status, error=None)
+        status = str((health or {}).get("status") or "ERROR")
+        error = str((health or {}).get("error") or "QWEN_NOT_REACHABLE")[:500]
+        value.update(qwen_status=status, error=error)
         self.store.write(value)
 
     def _tick_disabled(self, value: dict[str, Any], now: datetime) -> None:
-        requested = parse_time(value.get("off_requested_at"))
-        if requested is None and value.get("qwen_status") == "OFF":
-            if self.manager.health():
-                value.update(qwen_status="ERROR", error="QWEN_PORT_STILL_OPEN")
-            else:
-                value.update(qwen_pid=None, qwen_started_at=None, error=None)
-            self.store.write(value)
-            return
-        if requested is None:
-            requested = now
-            value["off_requested_at"] = now.isoformat()
-        if self.state.active_process_job_count() or (now - requested).total_seconds() < 2:
-            value.update(qwen_status="STOPPING")
-            self.store.write(value)
-            return
-        pid, started = value.get("qwen_pid"), value.get("qwen_started_at")
-        if pid and self.manager.is_owned(pid, started):
-            self.manager.stop(pid, started)
         health = self.manager.health()
-        if health:
-            value.update(qwen_status="ERROR", error="QWEN_PORT_STILL_OPEN")
+        if health and health.get("status") == "READY":
+            value.update(qwen_status="READY", error=None)
         else:
-            value.update(qwen_status="OFF", qwen_pid=None, qwen_started_at=None, error=None)
+            value.update(qwen_status="OFF", error=None)
         self.store.write(value)
 
     async def run(self, stop: asyncio.Event) -> None:

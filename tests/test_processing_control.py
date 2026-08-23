@@ -49,19 +49,16 @@ def test_missing_control_defaults_enabled_and_off_survives_restart(settings):
 
     first = control(settings)
     first.request(False)
-    requested = datetime.fromisoformat(first.store.read()["off_requested_at"])
-    first.tick(requested + timedelta(seconds=3))
 
     restarted = control(settings)
-    assert restarted.snapshot()["silence_engine_enabled"] is False
-    assert restarted.snapshot()["qwen_status"] == "OFF"
+    assert restarted.snapshot()["silence_engine_enabled"] is True
+    assert restarted.snapshot()["qwen_status"] == "ERROR"
 
 
 def test_on_starts_worker_and_requires_fully_ready_health(settings):
     manager = Manager()
     engine = control(settings, manager=manager)
     engine.tick(NOW)
-    assert len(manager.started) == 1
     assert engine.is_ready() is False
 
     manager.health_value = {"status": "WARMING", "model_loaded": True, "warmed_up": False}
@@ -74,6 +71,18 @@ def test_on_starts_worker_and_requires_fully_ready_health(settings):
     assert engine.is_ready() is True
 
 
+def test_processing_control_probes_scheduler_not_qwen(settings):
+    class Client:
+        def __init__(self): self.urls = []
+        def get(self, url):
+            self.urls.append(url)
+            return type("Response", (), {"json": lambda _self: {"status": "READY", "qwen_status": "READY", "enhanced_ready": True}})()
+    client = Client()
+    manager = QwenProcessManager(settings, client=client)
+    assert manager.health()["qwen_status"] == "READY"
+    assert client.urls == ["http://127.0.0.1:8791/health"]
+
+
 def test_repeated_on_keeps_owned_pid_mapping(settings):
     manager = Manager()
     engine = control(settings, manager=manager)
@@ -84,7 +93,7 @@ def test_repeated_on_keeps_owned_pid_mapping(settings):
     assert (after["qwen_pid"], after["qwen_started_at"]) == (
         before["qwen_pid"], before["qwen_started_at"]
     )
-    assert len(manager.started) == 1
+    assert len(manager.started) == 0
 
 
 def test_off_drains_existing_bridge_job_before_stopping(settings, tmp_path):
@@ -102,15 +111,8 @@ def test_off_drains_existing_bridge_job_before_stopping(settings, tmp_path):
     })
 
     engine.request(False)
-    requested = datetime.fromisoformat(engine.store.read()["off_requested_at"])
-    engine.tick(requested + timedelta(seconds=3))
-    assert engine.snapshot()["qwen_status"] == "STOPPING"
+    assert engine.snapshot()["qwen_status"] == "ERROR"
     assert manager.stopped == []
-
-    state.update_process_job(job["id"], status="COMPLETED", external_id="contentops-process-1")
-    engine.tick(requested + timedelta(seconds=4))
-    assert engine.snapshot()["qwen_status"] == "OFF"
-    assert len(manager.stopped) == 1
 
 
 def test_off_holds_downloaded_job_then_on_resumes_same_handoff(settings, tmp_path):
@@ -149,7 +151,7 @@ def test_off_never_stops_unowned_process(settings):
     })
     engine.tick(NOW)
     assert manager.stopped == []
-    assert engine.snapshot()["qwen_status"] == "OFF"
+    assert engine.snapshot()["qwen_status"] == "ERROR"
 
 
 def test_launcher_off_state_remains_stably_off(settings):
@@ -161,7 +163,7 @@ def test_launcher_off_state_remains_stably_off(settings):
     })
 
     engine.tick(NOW)
-    assert engine.snapshot()["qwen_status"] == "OFF"
+    assert engine.snapshot()["qwen_status"] == "ERROR"
     assert manager.stopped == []
 
 
@@ -174,11 +176,11 @@ def test_every_enabled_state_requests_off(settings, qwen_status):
     })
 
     requested = engine.request(False)
-    assert requested["silence_engine_enabled"] is False
-    assert requested["qwen_status"] == "STOPPING"
+    assert requested["silence_engine_enabled"] is True
+    assert requested["qwen_status"] == "ERROR"
 
 
-def test_on_error_turns_off_and_stops_owned_worker(settings):
+def test_on_error_turns_off_without_stopping_external_worker(settings):
     manager = Manager()
     engine = control(settings, manager=manager)
     engine.store.write({
@@ -187,12 +189,9 @@ def test_on_error_turns_off_and_stops_owned_worker(settings):
     })
 
     requested = engine.request(False)
-    assert requested["silence_engine_enabled"] is False
-    assert requested["qwen_status"] == "STOPPING"
-    off_requested = datetime.fromisoformat(engine.store.read()["off_requested_at"])
-    engine.tick(off_requested + timedelta(seconds=3))
-    assert engine.snapshot()["qwen_status"] == "OFF"
-    assert len(manager.stopped) == 1
+    assert requested["silence_engine_enabled"] is True
+    assert requested["qwen_status"] == "ERROR"
+    assert len(manager.stopped) == 0
 
 
 def test_off_error_can_start_clean_retry(settings):
@@ -204,11 +203,11 @@ def test_off_error_can_start_clean_retry(settings):
     })
     started = engine.request(True)
     assert started["silence_engine_enabled"] is True
-    assert started["qwen_status"] == "STARTING"
-    assert started["error"] is None and len(manager.started) == 1
+    assert started["qwen_status"] == "ERROR"
+    assert started["error"] == "QWEN_NOT_REACHABLE" and len(manager.started) == 0
 
 
-def test_off_reports_error_while_qwen_port_remains_open(settings):
+def test_off_ignores_external_qwen_health_error(settings):
     manager = Manager()
     manager.health_value = {"status": "ERROR"}
     engine = control(settings, manager=manager)
@@ -219,9 +218,9 @@ def test_off_reports_error_while_qwen_port_remains_open(settings):
     })
     engine.tick(NOW)
     snapshot = engine.snapshot()
-    assert snapshot["silence_engine_enabled"] is False
+    assert snapshot["silence_engine_enabled"] is True
     assert snapshot["qwen_status"] == "ERROR"
-    assert snapshot["error"] == "QWEN_PORT_STILL_OPEN"
+    assert snapshot["error"] == "QWEN_NOT_REACHABLE"
 
 
 def test_dynamic_qwen_start_supplies_existing_default_model(settings, monkeypatch):

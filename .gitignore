@@ -12,3 +12,6 @@ state/production-runtime.json.tmp
 logs/*.log
 tools/*.exe
 tools/yt-dlp
+build/
+dist/
+*.spec

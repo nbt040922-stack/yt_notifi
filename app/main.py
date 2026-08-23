@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
+import httpx
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -13,8 +15,8 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool
 from .channel_store import ChannelStore, ChannelStoreError
 from .channel_resolver import ChannelResolveError, ResolvedChannel, resolve_channel
 from .cleanup_worker import CleanupWorker
-from .config import Channel, Settings, load_team_members
-from .detector import resume_notifications
+from .config import Channel, Settings, user_data_root
+from .detector import deliver_notification, deliver_processing_notification, resume_notifications, resume_processed_notifications
 from .download_worker import DownloadHandoffWorker
 from .minha import (
     MinHaClient,
@@ -22,14 +24,17 @@ from .minha import (
     public_profile,
     resolve_channel_publish_target,
 )
-from .nas_sync_worker import NasSyncWorker
+from .nas_sync_worker import NasSyncWorker, ensure_writable_directory
 from .poller import ChannelPoller
 from .process_worker import ProcessHandoffWorker
 from .processing_control import ProcessingControl
 from .state import StateStore
 from .telegram import TelegramNotifier
+from .tiktok_publisher import PublishError, TikTokPublisher
+from .models import VideoEvent
 
 DASHBOARD = Path(__file__).with_name("dashboard.html")
+SETUP_PAGE = Path(__file__).with_name("setup.html")
 
 
 class ChannelCreate(BaseModel):
@@ -39,7 +44,6 @@ class ChannelCreate(BaseModel):
     url: str | None = Field(default=None, max_length=500)
     name: str = Field(min_length=1, max_length=200)
     enabled: bool = True
-    owner_id: str | None = None
 
 
 class ChannelUpdate(BaseModel):
@@ -66,7 +70,6 @@ class ChannelBulkCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     channels: list[str] = Field(min_length=1, max_length=500)
-    owner_id: str = Field(min_length=1, max_length=50)
 
 
 class NotifyChannelUpdate(BaseModel):
@@ -74,7 +77,6 @@ class NotifyChannelUpdate(BaseModel):
 
     enabled: StrictBool | None = None
     cut_enabled: StrictBool | None = None
-    owner_id: str | None = Field(default=None, max_length=50)
 
 
 class ProcessingControlUpdate(BaseModel):
@@ -83,9 +85,43 @@ class ProcessingControlUpdate(BaseModel):
     silence_engine_enabled: StrictBool
 
 
+class TelegramSetup(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    bot_token: str = Field(min_length=10, max_length=300)
+    chat_id: str = Field(min_length=1, max_length=100)
+
+
+class OutputSetup(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    output_dir: str = Field(min_length=1, max_length=2000)
+
+
+class SilenceCutterLanSetup(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    url: str = Field(min_length=8, max_length=500)
+    token: str = Field(min_length=8, max_length=500)
+
+
+class PublishJobCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    processing_job_id: int = Field(gt=0)
+    channel_id: str = Field(min_length=1, max_length=100)
+    video_path: str = Field(min_length=1, max_length=2000)
+
+
+class PublishJobRun(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    dry_run: StrictBool = True
+
+
 def configure_logging() -> None:
-    log_dir = Path(__file__).resolve().parent.parent / "logs"
-    log_dir.mkdir(exist_ok=True)
+    log_dir = user_data_root() / "logs" if os.getenv("YT_NOTIFI_PACKAGED") == "1" else Path(__file__).resolve().parent.parent / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
     logger = logging.getLogger("yt_notifi")
     if logger.handlers:
         return
@@ -104,14 +140,17 @@ def create_app(
     channel_resolver=None,
     processing_control=None,
     minha_client=None,
+    publisher=None,
 ) -> FastAPI:
     settings = settings or Settings.from_env()
-    team_members = load_team_members(settings.team_members_file)
     state = state or StateStore(settings.state_db)
     notifier = notifier or TelegramNotifier(settings.telegram_bot_token, settings.telegram_chat_id)
-    channel_store = channel_store or ChannelStore(settings.channels_file, team_members)
+    channel_store = channel_store or ChannelStore(settings.channels_file)
     channel_resolver = channel_resolver or resolve_channel
     minha_client = minha_client or MinHaClient(settings.minha_base_url, settings.minha_auth_token)
+    publisher = publisher or TikTokPublisher(
+        state, channel_store, minha_client, notifier=notifier,
+    )
     def processing_channel_ids():
         try:
             return {channel.channel_id for channel in channel_store.enabled() if channel.cut_enabled}
@@ -125,11 +164,29 @@ def create_app(
         channels = []
     poller = ChannelPoller(
         settings, state, notifier, channels, channel_loader=channel_store.enabled,
-        processing_channel_loader=processing_channel_ids, team_members=team_members,
+        processing_channel_loader=processing_channel_ids,
     )
-    download_worker = DownloadHandoffWorker(settings, state)
+    download_worker = DownloadHandoffWorker(
+        settings, state,
+    )
     processing_control = processing_control or ProcessingControl(settings, state)
-    process_worker = ProcessHandoffWorker(settings, state, control=processing_control)
+    def notify_after_processing(job_id: int) -> None:
+        job = state.processing_job(job_id)
+        if not job:
+            return
+        channel = next((item for item in channel_store.list() if item.channel_id == job["source_channel_id"]), None)
+        if not channel or not channel.cut_enabled:
+            return
+        video = state.get_video(job["video_id"])
+        if not video or video["notification_sent"]:
+            return
+        state.release_notification(job["video_id"])
+        deliver_processing_notification(job, state, notifier, job["channel_name"])
+
+    process_worker = ProcessHandoffWorker(
+        settings, state, control=processing_control, publisher=publisher,
+        on_processing_done=notify_after_processing,
+    )
     nas_sync_worker = NasSyncWorker(settings, state)
     cleanup_worker = CleanupWorker(settings, state)
 
@@ -137,6 +194,10 @@ def create_app(
         while True:
             try:
                 await asyncio.to_thread(resume_notifications, state, notifier, poller.names)
+                await asyncio.to_thread(
+                    resume_processed_notifications, state, notifier, poller.names,
+                    {channel.channel_id for channel in channel_store.enabled() if channel.cut_enabled},
+                )
             except Exception as exc:
                 logging.getLogger("yt_notifi").error("TELEGRAM_RETRY error_type=%s", type(exc).__name__)
             await asyncio.sleep(60)
@@ -223,6 +284,77 @@ def create_app(
     def dashboard() -> str:
         return DASHBOARD.read_text(encoding="utf-8")
 
+    @app.get("/setup", response_class=HTMLResponse)
+    def setup_page() -> str:
+        return SETUP_PAGE.read_text(encoding="utf-8")
+
+    @app.get("/api/setup/status")
+    def setup_status() -> dict:
+        return {
+            "telegram_configured": bool(notifier.token and notifier.chat_id),
+            "silence_cutter": "EXTERNAL_OPTIONAL",
+            "silence_cutter_lan_configured": bool(settings.silence_cutter_lan_url and settings.silence_cutter_lan_token),
+            "silence_cutter_lan_url": settings.silence_cutter_lan_url,
+            "data_root": str(user_data_root()),
+            "output_dir": str(settings.nas_output_root) if settings.nas_output_root else "",
+        }
+
+    @app.post("/api/setup/silence-cutter-lan")
+    def setup_silence_cutter_lan(payload: SilenceCutterLanSetup) -> dict:
+        url = payload.url.strip().rstrip("/")
+        if not url.startswith(("http://", "https://")):
+            return JSONResponse({"ok": False, "error": "LAN_URL_INVALID"}, status_code=400)
+        data_root = user_data_root()
+        data_root.mkdir(parents=True, exist_ok=True)
+        env_path = data_root / ".env"
+        existing = env_path.read_text(encoding="utf-8") if env_path.exists() else ""
+        lines = [line for line in existing.splitlines() if not line.startswith(("SILENCE_CUTTER_LAN_URL=", "SILENCE_CUTTER_LAN_TOKEN="))]
+        lines.extend([f"SILENCE_CUTTER_LAN_URL={url}", f"SILENCE_CUTTER_LAN_TOKEN={payload.token}"])
+        env_path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+        return {"ok": True, "url": url}
+
+    @app.post("/api/setup/output")
+    def setup_output(payload: OutputSetup) -> dict:
+        output = Path(payload.output_dir).expanduser().resolve()
+        try:
+            output.mkdir(parents=True, exist_ok=True)
+            if not ensure_writable_directory(output):
+                raise OSError("OUTPUT_NOT_WRITABLE")
+        except OSError as exc:
+            return JSONResponse({"ok": False, "error": "OUTPUT_NOT_WRITABLE", "message": str(exc)}, status_code=400)
+        data_root = user_data_root()
+        data_root.mkdir(parents=True, exist_ok=True)
+        env_path = data_root / ".env"
+        existing = env_path.read_text(encoding="utf-8") if env_path.exists() else ""
+        lines = [line for line in existing.splitlines() if not line.startswith("NAS_OUTPUT_ROOT=")]
+        lines.append(f"NAS_OUTPUT_ROOT={output}")
+        env_path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+        object.__setattr__(settings, "nas_output_root", output)
+        return {"ok": True, "output_dir": str(output)}
+
+    @app.post("/api/setup/telegram")
+    def setup_telegram(payload: TelegramSetup) -> dict:
+        data_root = user_data_root()
+        data_root.mkdir(parents=True, exist_ok=True)
+        env_path = data_root / ".env"
+        existing = env_path.read_text(encoding="utf-8") if env_path.exists() else ""
+        lines = [line for line in existing.splitlines() if not line.startswith(("TELEGRAM_BOT_TOKEN=", "TELEGRAM_CHAT_ID="))]
+        lines.extend([f"TELEGRAM_BOT_TOKEN={payload.bot_token}", f"TELEGRAM_CHAT_ID={payload.chat_id}"])
+        env_path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+        notifier.token = payload.bot_token
+        notifier.chat_id = payload.chat_id
+        if not notifier.send_message("YT_NOTIFI đã kết nối Telegram thành công."):
+            return JSONResponse({"ok": False, "error": "TELEGRAM_TEST_FAILED", "message": notifier.last_error}, status_code=400)
+        return {"ok": True, "message": "Đã lưu và gửi tin nhắn kiểm tra."}
+
+    @app.get("/api/setup/silence-cutter")
+    def setup_silence_cutter() -> dict:
+        try:
+            response = httpx.get(f"{settings.silence_cutter_bridge_url}/health", timeout=3)
+            return {"ok": response.is_success, "status": response.status_code, "optional": True}
+        except httpx.HTTPError:
+            return {"ok": False, "status": None, "optional": True}
+
     @app.get("/health")
     def health() -> dict[str, str | int]:
         try:
@@ -270,17 +402,72 @@ def create_app(
 
     @app.get("/api/team-members")
     def api_team_members() -> list[dict]:
-        return [member.__dict__ for member in team_members]
+        return []
 
     @app.get("/api/jobs")
     def api_jobs(limit: int = 200) -> list[dict]:
-        return [dict(job) for job in state.processing_jobs(max(1, min(limit, 500)))]
+        jobs = [dict(job) for job in state.processing_jobs(max(1, min(limit, 500)))]
+        publish = publisher.store.dashboard_rows([job["id"] for job in jobs])
+        for job in jobs:
+            job["tiktok_publish"] = publish.get(job["id"])
+        return jobs
+
+    def publish_error(exc: PublishError) -> JSONResponse:
+        return JSONResponse(
+            {"error": exc.code, "message": exc.message}, status_code=exc.status_code,
+        )
+
+    @app.post("/api/publish-jobs", status_code=201)
+    def create_publish_job(payload: PublishJobCreate) -> dict:
+        try:
+            return dict(publisher.create(
+                payload.processing_job_id, payload.channel_id, payload.video_path,
+            ))
+        except PublishError as exc:
+            return publish_error(exc)
+
+    @app.get("/api/publish-jobs")
+    def list_publish_jobs(limit: int = 200) -> list[dict]:
+        return [dict(job) for job in publisher.store.list(max(1, min(limit, 500)))]
+
+    @app.get("/api/publish-jobs/{publish_job_id}")
+    def get_publish_job(publish_job_id: int) -> dict:
+        job = publisher.store.get(publish_job_id)
+        if not job:
+            return publish_error(PublishError("PUBLISH_JOB_NOT_FOUND", status_code=404))
+        result = dict(job)
+        receipt = publisher.store.receipt(publish_job_id)
+        result["receipt"] = dict(receipt) if receipt else None
+        return result
+
+    @app.post("/api/publish-jobs/{publish_job_id}/run")
+    def run_publish_job(publish_job_id: int, payload: PublishJobRun | None = None) -> dict:
+        try:
+            return dict(publisher.run(
+                publish_job_id, dry_run=True if payload is None else payload.dry_run,
+            ))
+        except PublishError as exc:
+            return publish_error(exc)
 
     @app.post("/api/jobs/clear-completed")
     def clear_completed_jobs() -> dict[str, int]:
-        cleared = state.clear_completed_jobs()
-        logging.getLogger("yt_notifi").info("JOBS_CLEAR_COMPLETED cleared=%s", cleared)
+        processing_cleared = state.clear_history()
+        publish_cleared = publisher.clear_history()
+        cleared = processing_cleared + publish_cleared
+        logging.getLogger("yt_notifi").info(
+            "JOBS_CLEAR_HISTORY processing=%s publish=%s", processing_cleared, publish_cleared,
+        )
         return {"cleared": cleared}
+
+    @app.post("/api/jobs/clear-failed")
+    def clear_failed_jobs() -> dict[str, int]:
+        processing_cleared = state.clear_failed_jobs()
+        publish_cleared = publisher.clear_failed()
+        cleared = processing_cleared + publish_cleared
+        logging.getLogger("yt_notifi").info(
+            "JOBS_CLEAR_FAILED processing=%s publish=%s", processing_cleared, publish_cleared,
+        )
+        return {"cleared": cleared, "processing_cleared": processing_cleared, "publish_cleared": publish_cleared}
 
     @app.delete("/api/jobs/{job_id}")
     def clear_failed_job(job_id: int) -> dict[str, str]:
@@ -359,7 +546,7 @@ def create_app(
 
     @app.post("/api/channels/bulk")
     async def add_channels_bulk(payload: ChannelBulkCreate) -> dict:
-        if payload.owner_id not in {member.id for member in team_members}:
+        if False:
             raise ChannelStoreError("INVALID_OWNER_ID", "Thành viên không hợp lệ.")
         semaphore = asyncio.Semaphore(settings.notify_resolve_concurrency)
         unique_inputs = list(dict.fromkeys(
@@ -410,7 +597,7 @@ def create_app(
             duplicate = value in seen_inputs or item.channel_id in seen_channels
             try:
                 channel = channel_store.add(
-                    item.channel_id, name, owner_id=payload.owner_id, cut_enabled=False,
+                    item.channel_id, name, cut_enabled=False,
                 )
                 state.reset_poll_baseline(item.channel_id)
                 status, item_error = "ADDED", None
@@ -418,8 +605,8 @@ def create_app(
                 channel = next(
                     (row for row in channel_store.list() if row.channel_id == item.channel_id), None
                 )
-                owner = next((member for member in team_members if channel and member.id == channel.owner_id), None)
                 status = "ALREADY_EXISTS" if exc.code == "CHANNEL_ALREADY_EXISTS" else "FAILED"
+                owner = None
                 item_error = f"Kênh này đang thuộc {owner.display_name}." if owner else exc.message
             if duplicate:
                 status = "ALREADY_EXISTS"
@@ -442,15 +629,13 @@ def create_app(
         before = next((row for row in state.notify_channels() if row["channel_id"] == channel_id), None)
         if not before:
             return JSONResponse({"error": "CHANNEL_NOT_FOUND", "message": "Channel not found."}, status_code=404)
-        owner_ids = {member.id for member in team_members}
-        if payload.owner_id is not None and payload.owner_id not in owner_ids:
+        if False:
             return JSONResponse({"error": "INVALID_OWNER", "message": "Owner không hợp lệ."}, status_code=400)
         cut_enabled = payload.cut_enabled if payload.cut_enabled is not None else bool(before["cut_enabled"])
-        owner_id = payload.owner_id or before["owner_id"]
-        if cut_enabled and not owner_id:
+        if False:
             return JSONResponse({"error": "OWNER_REQUIRED", "message": "Phải chọn người nhận output."}, status_code=400)
         row = state.update_notify_channel(
-            channel_id, payload.enabled, payload.cut_enabled, payload.owner_id
+            channel_id, payload.enabled, payload.cut_enabled
         )
         silence_ids = processing_channel_ids()
         if payload.enabled and before and not before["enabled"] and channel_id not in silence_ids:
@@ -490,7 +675,7 @@ def create_app(
         values = [value for value in (payload.channel_id, payload.url) if value]
         if len(values) != 1:
             raise ChannelStoreError("INVALID_REQUEST", "Hãy nhập một Channel ID hoặc URL.")
-        channel = channel_store.add(values[0], payload.name, payload.enabled, payload.owner_id)
+        channel = channel_store.add(values[0], payload.name, payload.enabled)
         if channel.enabled:
             state.reset_poll_baseline(channel.channel_id)
         return channel_payload(channel)

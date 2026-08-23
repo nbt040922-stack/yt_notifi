@@ -7,7 +7,7 @@ import threading
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from .config import CHANNEL_ID_RE, Channel, TeamMember, load_channels, load_team_members
+from .config import CHANNEL_ID_RE, Channel, load_channels
 
 CHANNEL_URL_RE = re.compile(r"^/channel/(UC[A-Za-z0-9_-]{22})/?$")
 
@@ -36,11 +36,10 @@ def parse_channel_id(value: str) -> str:
 
 
 class ChannelStore:
-    def __init__(self, path: Path, members: list[TeamMember] | None = None):
+    def __init__(self, path: Path, members=None):
         self.path = path
-        self.members = members or load_team_members()
-        self.owner_ids = {member.id for member in self.members}
-        self.default_owner = self.members[0].id
+        self.owner_ids: set[str] = {member.id for member in members} if members else set()
+        self.default_owner = "member_1" if "member_1" in self.owner_ids else next(iter(self.owner_ids), "")
         self._lock = threading.Lock()
         self._generation = 0
 
@@ -53,7 +52,9 @@ class ChannelStore:
         if not self.path.exists():
             return []
         try:
-            channels = load_channels(self.path, self.owner_ids, self.default_owner)
+            channels = load_channels(
+                self.path, self.owner_ids or None, self.default_owner,
+            )
         except Exception as exc:
             raise ChannelStoreError(
                 "CONFIG_INVALID",
@@ -105,7 +106,7 @@ class ChannelStore:
         if not display_name:
             raise ChannelStoreError("INVALID_CHANNEL_NAME", "Tên kênh không được để trống.")
         owner_id = owner_id or self.default_owner
-        if owner_id not in self.owner_ids:
+        if self.owner_ids and owner_id not in self.owner_ids:
             raise ChannelStoreError("INVALID_OWNER_ID", "Thành viên không hợp lệ.")
         with self._lock:
             channels = self._load_unlocked()
@@ -121,7 +122,7 @@ class ChannelStore:
         name: str | None = None,
     ) -> tuple[Channel, bool]:
         channel_id = parse_channel_id(channel_id)
-        if owner_id is not None and owner_id not in self.owner_ids:
+        if self.owner_ids and owner_id is not None and owner_id not in self.owner_ids:
             raise ChannelStoreError("INVALID_OWNER_ID", "Thành viên không hợp lệ.")
         display_name = name.strip() if name is not None else None
         if display_name is not None and not display_name:
@@ -154,7 +155,7 @@ class ChannelStore:
             for row in rows:
                 if row["channel_id"] in existing:
                     result["conflicts"] += 1
-                elif row["owner_id"] not in self.owner_ids:
+                elif self.owner_ids and row["owner_id"] not in self.owner_ids:
                     result["unresolved"] += 1
                 else:
                     channels.append(Channel(

@@ -23,7 +23,7 @@ BACKOFF_SECONDS = (5, 10, 20, 30, 60)
 
 
 class DownloadHandoffWorker:
-    def __init__(self, settings: Settings, state: StateStore, client=None):
+    def __init__(self, settings: Settings, state: StateStore, client=None, remote_processing: bool = False):
         self.settings = settings
         self.state = state
         self.client = client or httpx.Client(timeout=5)

@@ -73,6 +73,28 @@ class TelegramNotifier:
             f"{event.url}"
         )
 
+    def send_processing_complete(
+        self,
+        title: str,
+        output_paths: list[str],
+        channel_name: str | None = None,
+        channel_id: str | None = None,
+        source_url: str | None = None,
+    ) -> bool:
+        locations = "\n".join(f"- {path}" for path in output_paths) or "- Chưa xác định được đường dẫn đầu ra"
+        channel_details = f"Kênh: {channel_name or 'Chưa xác định'}\n"
+        if channel_id:
+            channel_details += f"Channel ID: {channel_id}\n"
+        if source_url:
+            channel_details += f"Video nguồn: {source_url}\n"
+        return self.send_message(
+            "✅ EDIT XONG\n\n"
+            f"{channel_details}"
+            f"Video: {title}\n\n"
+            "File đã lưu tại:\n"
+            f"{locations}"
+        )
+
 
 if __name__ == "__main__":
     from .config import Settings

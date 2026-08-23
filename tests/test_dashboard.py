@@ -51,6 +51,10 @@ def test_dashboard_loads(settings):
     assert response.status_code == 200
     assert "YT_NOTIFI" in response.text
     assert "THÊM HÀNG LOẠT KÊNH" in response.text
+    assert "POST_RESULT_UNCERTAIN" in response.text
+    assert "TikTok: Chưa có job đăng" in response.text
+    assert "tiktok-progress" in response.text
+    assert "Lỗi: ${tikTok.failure_reason}" in response.text
 
 
 def test_dashboard_accepts_lan_host_header(settings):
@@ -74,23 +78,48 @@ def test_dashboard_processing_control_api(settings):
     ).status_code == 400
 
 
-def test_dashboard_engine_toggle_is_deterministic_and_race_safe(settings):
-    html = TestClient(create_app(settings)).get("/").text
-    assert "const enable = !processingControl.silence_engine_enabled;" in html
-    assert "|| processingControl.qwen_status === 'ERROR'" not in html
-    assert "engineRequestInFlight || processingControl.qwen_status === 'STOPPING'" in html
-    assert "engineRequestInFlight = true" in html
-    assert "engineRequestInFlight = false" in html
+def test_setup_saves_silence_cutter_lan_config(settings, tmp_path, monkeypatch):
+    data_root = tmp_path / "YT_NOTIFI"
+    monkeypatch.setenv("YT_NOTIFI_PACKAGED", "1")
+    monkeypatch.setenv("YT_NOTIFI_DATA_DIR", str(data_root))
+    client = TestClient(create_app(settings))
+    response = client.post("/api/setup/silence-cutter-lan", json={
+        "url": "http://192.168.88.19:8780/",
+        "token": "test-lan-token-123",
+    })
+    assert response.status_code == 200
+    assert response.json()["url"] == "http://192.168.88.19:8780"
+    saved = (data_root / ".env").read_text(encoding="utf-8")
+    assert "SILENCE_CUTTER_LAN_URL=http://192.168.88.19:8780" in saved
+    assert "SILENCE_CUTTER_LAN_TOKEN=test-lan-token-123" in saved
 
 
-def test_dashboard_engine_labels_and_error_detail_are_explicit(settings):
+def test_setup_page_distinguishes_saved_lan_status_from_local_bridge(settings):
+    html = TestClient(create_app(settings)).get("/setup").text
+    assert 'id="lan-status"' in html
+    assert "Token được giữ bảo mật" in html
+    assert "Silence Cutter cục bộ" in html
+
+
+def test_setup_rejects_non_http_lan_url(settings):
+    client = TestClient(create_app(settings))
+    response = client.post("/api/setup/silence-cutter-lan", json={
+        "url": "192.168.88.19:8780",
+        "token": "test-lan-token-123",
+    })
+    assert response.status_code == 400
+
+
+def test_dashboard_uses_per_channel_cut_toggle(settings):
     html = TestClient(create_app(settings)).get("/").text
-    assert "`ON / ${control.qwen_status}`" in html
-    assert "`OFF / ${control.qwen_status}`" in html
-    assert "control.qwen_status === 'OFF' ? 'OFF'" in html
-    assert "control.qwen_status === 'ERROR'" in html
-    assert "id=\"engine-error\"" in html
-    assert "String(control.error || 'QWEN_ERROR')" in html
+    assert "Cắt tool:" in html
+    assert "engine-toggle" not in html
+
+
+def test_dashboard_has_no_global_engine_button(settings):
+    html = TestClient(create_app(settings)).get("/").text
+    assert "Silence Engine" not in html
+    assert "/api/processing-control" not in html
 
 
 def test_get_channels_includes_runtime_state(settings):

@@ -62,6 +62,16 @@ def test_baseline_creates_no_job(settings, tmp_path):
     assert state.processing_jobs() == []
 
 
+def test_remote_processing_does_not_require_local_nas(settings):
+    state, telegram = StateStore(settings.state_db), notifier()
+    assert handle_detected_video(
+        event("remote-video"), state, telegram, {CHANNEL_ID: "Test Channel"},
+        nas_output_root=None, remote_processing=True,
+    ) == "NEW"
+    job = state.processing_jobs()[0]
+    assert (job["status"], job["error"]) == ("QUEUED", None)
+
+
 def test_missing_channel_folder_is_created_with_safe_name(settings, tmp_path):
     state = StateStore(settings.state_db)
     members, member_root = owned(settings, tmp_path)

@@ -20,12 +20,13 @@ BACKOFF_SECONDS = (5, 10, 20, 30, 60)
 
 
 class ProcessHandoffWorker:
-    def __init__(self, settings: Settings, state: StateStore, client=None, control=None, publisher=None):
+    def __init__(self, settings: Settings, state: StateStore, client=None, control=None, publisher=None, on_processing_done=None):
         self.settings = settings
         self.state = state
         self.client = client or httpx.Client(timeout=5)
         self.control = control
         self.publisher = publisher
+        self.on_processing_done = on_processing_done
         parsed = urlsplit(settings.silence_cutter_bridge_url)
         self.bridge_url = settings.silence_cutter_bridge_url.rstrip("/")
         self.bridge_valid = (
@@ -68,6 +69,7 @@ class ProcessHandoffWorker:
                     "output_dir": str(processing_output_dir),
                     "video_id": job["video_id"],
                     "video_title": job["video_title"],
+                    "origin": "AUTO_YT_NOTIFI",
                     "enhanced_content_selection": True,
                 },
             )
@@ -131,6 +133,8 @@ class ProcessHandoffWorker:
             )
             if self.publisher:
                 self.publisher.handle_processing_done(job["id"])
+            if self.on_processing_done:
+                self.on_processing_done(job["id"])
             return None
         if process_state == "FAILED":
             return self._failed(job, str(payload.get("error") or "PROCESSING_FAILED"), process_state, external_id)

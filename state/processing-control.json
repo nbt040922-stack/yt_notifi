@@ -1,0 +1,8 @@
+{
+  "silence_engine_enabled": true,
+  "qwen_status": "READY",
+  "qwen_pid": 37592,
+  "qwen_started_at": "2026-08-23T07:36:15.9328871Z",
+  "error": "QWEN_NOT_REACHABLE",
+  "off_requested_at": null
+}

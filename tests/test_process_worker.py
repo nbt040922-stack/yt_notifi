@@ -53,6 +53,25 @@ class NotReadyBridge(Bridge):
         return {"status": "NOT_READY", "enhanced_ready": False}
 
 
+class LanClient:
+    def __init__(self, responses):
+        self.responses, self.calls = iter(responses), []
+
+    def get(self, url, **kwargs):
+        self.calls.append(("GET", url, kwargs))
+        return self._next()
+
+    def post(self, url, **kwargs):
+        self.calls.append(("POST", url, kwargs))
+        return self._next()
+
+    def _next(self):
+        value = next(self.responses)
+        if isinstance(value, Exception):
+            raise value
+        return value
+
+
 class PublisherHook:
     def __init__(self):
         self.calls = []
@@ -99,6 +118,41 @@ def test_downloaded_job_submits_once_and_tracks_existing(settings, tmp_path):
     assert job["owner_id"] == "member_2"
     assert bridge.posts[0][1]["enhanced_content_selection"] is True
     assert (job["status"], job["process_progress"]) == ("PROCESSING", 42)
+
+
+def test_configured_manual_lan_endpoint_never_redirects_auto_processing(settings, tmp_path):
+    settings = replace(settings, silence_cutter_lan_url="http://10.0.0.8:8780", silence_cutter_lan_token="lan-secret")
+    state, _ = downloaded_job(settings, tmp_path)
+    client = Bridge([Response(payload())])
+    ProcessHandoffWorker(settings, state, client).tick()
+    assert client.posts[0][0] == "http://127.0.0.1:8791/api/process-jobs"
+
+
+@pytest.mark.skip(reason="legacy LAN processing path removed; manual API now owns :8780")
+def test_auto_processing_tracks_done_output_from_local_bridge(settings, tmp_path):
+    settings = replace(settings, silence_cutter_lan_url="http://10.0.0.8:8780", silence_cutter_lan_token="lan-secret")
+    state, _ = downloaded_job(settings, tmp_path)
+    job = state.processing_jobs()[0]
+    state.update_process_job(job["id"], status="PROCESSING", external_id="contentops-process-1", process_state="PROCESSING")
+    client = LanClient([Response({"status": "DONE", "output_folder": "\\\\nas\\\​clean\\video"})])
+    publisher = PublisherHook()
+    ProcessHandoffWorker(settings, state, client, publisher=publisher).tick()
+    job = state.processing_jobs()[0]
+    assert job["status"] == "COMPLETED"
+    assert job["processed_file_path"] == "\\\\nas\\\​clean\\video"
+    assert publisher.calls == []
+
+
+def test_auto_processing_rejects_local_bridge_failure_without_looping(settings, tmp_path):
+    settings = replace(settings, silence_cutter_lan_url="http://10.0.0.8:8780", silence_cutter_lan_token="lan-secret")
+    state, _ = downloaded_job(settings, tmp_path)
+    job = state.processing_jobs()[0]
+    state.update_process_job(job["id"], status="PROCESSING", external_id="contentops-process-1", process_state="PROCESSING")
+    client = Bridge([Response({"state": "FAILED", "error": "input media contains no audio stream"})])
+    ProcessHandoffWorker(settings, state, client).tick()
+    job = state.processing_jobs()[0]
+    assert job["status"] == "FAILED"
+    assert job["process_error"] == "input media contains no audio stream"
 
 
 def test_bridge_not_ready_keeps_job_pending_without_post(settings, tmp_path):

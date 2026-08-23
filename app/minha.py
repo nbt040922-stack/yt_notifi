@@ -20,13 +20,30 @@ class MinHaClient:
         self.auth_token = auth_token
         self.client = client
 
-    def _get(self, path: str) -> httpx.Response:
+    def _request(self, method: str, path: str, *, timeout: float = 3) -> httpx.Response:
         headers = {"Authorization": f"Bearer {self.auth_token}"} if self.auth_token else {}
         try:
-            getter = self.client.get if self.client else httpx.get
-            return getter(f"{self.base_url}{path}", headers=headers, timeout=3)
+            requester = self.client.request if self.client else httpx.request
+            return requester(method, f"{self.base_url}{path}", headers=headers, timeout=timeout)
         except httpx.HTTPError as exc:
             raise MinHaUnavailable from exc
+
+    def _get(self, path: str) -> httpx.Response:
+        return self._request("GET", path)
+
+    def _json_request(
+        self, method: str, path: str, *, timeout: float = 3,
+    ) -> dict[str, Any]:
+        response = self._request(method, path, timeout=timeout)
+        if response.status_code >= 400:
+            raise MinHaUnavailable
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise MinHaUnavailable from exc
+        if not isinstance(payload, dict):
+            raise MinHaUnavailable
+        return payload
 
     def list_profiles(self) -> list[dict[str, Any]]:
         response = self._get("/api/profiles")
@@ -51,6 +68,24 @@ class MinHaClient:
         except ValueError as exc:
             raise MinHaUnavailable from exc
         return payload if isinstance(payload, dict) else None
+
+    def profile_status(self, profile_id: str) -> dict[str, Any]:
+        return self._json_request("GET", f"/api/profiles/{quote(profile_id, safe='')}/status")
+
+    def probe_tiktok(self, profile_id: str) -> dict[str, Any]:
+        return self._json_request(
+            "POST", f"/api/profiles/{quote(profile_id, safe='')}/tiktok-probe", timeout=90,
+        )
+
+    def launch_profile(self, profile_id: str) -> dict[str, Any]:
+        return self._json_request(
+            "POST", f"/api/profiles/{quote(profile_id, safe='')}/launch", timeout=60,
+        )
+
+    def stop_profile(self, profile_id: str) -> dict[str, Any]:
+        return self._json_request(
+            "POST", f"/api/profiles/{quote(profile_id, safe='')}/stop", timeout=30,
+        )
 
 
 PROFILE_FIELDS = (

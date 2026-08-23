@@ -20,9 +20,6 @@
     .metric span { display: block; color: #8f9bad; font-size: 12px; margin-bottom: 7px; }
     .metric strong { font-size: 17px; }
     .metric small { display: block; color: #8f9bad; margin-top: 7px; }
-    #engine-toggle.engine-on { background: #176b4b; border-color: #42d392; }
-    #engine-toggle.engine-off, #engine-toggle.engine-error { background: #55252c; border-color: #a94a58; }
-    #engine-error { color: #ff9ca6; overflow-wrap: anywhere; }
     .toolbar { display: flex; justify-content: space-between; align-items: center; }
     button { border: 1px solid #344057; border-radius: 8px; background: #171e2b; color: #edf1f7; padding: 9px 13px; cursor: pointer; }
     button:hover { border-color: #647697; }
@@ -69,6 +66,12 @@
     .job span { overflow-wrap: anywhere; font-size: 13px; }
     .job .muted { color: #8f9bad; }
     .job .failed, .job .cancelled { color: #ff9ca6; }
+    .tiktok-publish { display: grid; gap: 4px; min-width: 0; }
+    .tiktok-publish-title { color: #fff; font-weight: 700; }
+    .tiktok-publish-line { color: #c7d0df; font-size: 12px; overflow-wrap: anywhere; }
+    .tiktok-publish-error { color: #ff7f8c; font-size: 12px; overflow-wrap: anywhere; }
+    .tiktok-progress { height: 7px; width: 100%; background: #252d3c; border-radius: 99px; overflow: hidden; }
+    .tiktok-progress > i { display: block; height: 100%; background: #3b6df6; border-radius: inherit; transition: width .25s ease; }
     .job-actions { display: flex; gap: 6px; }
     .form-error { min-height: 20px; margin: 12px 0; color: #ff9ca6; font-size: 13px; }
     .notice { position: fixed; right: 20px; bottom: 20px; background: #183a2d; border: 1px solid #34775d; border-radius: 9px; padding: 11px 15px; display: none; }
@@ -83,10 +86,8 @@
     <div class="metric"><span>yt-dlp</span><strong id="ytdlp">—</strong></div>
     <div class="metric"><span>Telegram</span><strong id="telegram">—</strong></div>
     <div class="metric"><span>Kênh đang bật</span><strong id="enabled">—</strong></div>
-    <div class="metric"><span>Silence Engine</span><button id="engine-toggle">—</button><small id="engine-error"></small><small id="engine-waiting">Đang chờ: —</small></div>
   </section>
   <div class="form-error" id="migration-warning"></div>
-  <nav class="tabs" id="team-tabs"></nav>
   <section class="tab-pane" id="silence-tab">
     <h2>THÊM HÀNG LOẠT KÊNH</h2>
     <form class="bulk" id="channel-bulk-form">
@@ -98,7 +99,7 @@
     </form>
     <h2>KÊNH THEO DÕI</h2>
     <div id="channels"></div>
-    <div class="toolbar"><h2>JOBS</h2><button class="danger" id="clear-completed">Xóa job hoàn thành</button></div>
+    <div class="toolbar"><h2>JOBS</h2><button class="danger" id="clear-completed">Xóa toàn bộ lịch sử</button></div>
     <div id="jobs"></div>
   </section>
 </main>
@@ -116,10 +117,6 @@
 <script>
   const list = document.querySelector('#channels');
   const jobsList = document.querySelector('#jobs');
-  let teamMembers = [];
-  let activeOwner = '';
-  let processingControl = null;
-  let engineRequestInFlight = false;
   let renameChannel = null;
   let minhaProfiles = [];
   let minhaAvailable = false;
@@ -207,10 +204,53 @@
     card.append(row, details); return card;
   }
 
+  function renderTikTokPublish(tikTok) {
+    const box = document.createElement('div'); box.className = 'tiktok-publish';
+    if (!tikTok) { box.textContent = 'TikTok: Chưa có job đăng'; return box; }
+    const labels = {
+      CONNECT_CDP:'Kết nối MinHa', PAGE_FOUND:'Đã tìm thấy trang TikTok', UPLOAD_PAGE_OPEN:'Đã mở TikTok Studio',
+      WAIT_FILE_INPUT:'Đang chờ ô chọn video', FILE_INPUT_FOUND:'Đã tìm thấy ô upload', SET_INPUT_FILES_START:'Đang chọn video',
+      SET_INPUT_FILES_DONE:'Đã chọn video', UPLOAD_STARTED:'Bắt đầu upload', UPLOAD_PROGRESS:'Đang upload', UPLOAD_COMPLETE:'Upload hoàn tất', UPLOAD_COMPLETE_REAL:'Upload hoàn tất', TIKTOK_UPLOAD_COMPLETE:'Upload hoàn tất',
+      CONFIGURING_POST:'Đang cấu hình bài đăng', POSTING:'Đang đăng', VERIFYING:'Đang xác minh', DONE:'ĐÃ ĐĂNG', BLOCKED:'BỊ CHẶN', FAILED:'LỖI',
+      POST_RESULT_UNCERTAIN:'KHÔNG XÁC ĐỊNH KẾT QUẢ', QUEUED:'Đang chờ', VALIDATING:'Đang kiểm tra', IDENTITY_CHECK:'Đang xác minh tài khoản',
+      OPENING_BROWSER:'Đang mở trình duyệt', WAITING_TIKTOK_UPLOAD:'Đang chờ TikTok upload', READY_TO_POST:'Sẵn sàng đăng', READY_FOR_POST:'Sẵn sàng đăng', UPLOADING:'Đang upload'
+    };
+    const step = tikTok.current_step || tikTok.status || '—';
+    const percent = Math.max(0, Math.min(100, Number(tikTok.progress_percent) || 0));
+    const title = document.createElement('strong'); title.className = 'tiktok-publish-title'; title.textContent = 'TikTok Publish';
+    const status = document.createElement('span'); status.className = 'tiktok-publish-line'; status.textContent = `Trạng thái: ${tikTok.status || '—'}`;
+    const current = document.createElement('span'); current.className = 'tiktok-publish-line'; current.textContent = `Bước: ${labels[step] || step}`;
+    const progress = document.createElement('span'); progress.className = 'tiktok-publish-line'; progress.textContent = `Tiến độ: ${Math.round(percent)}%`;
+    const bar = document.createElement('div'); bar.className = 'tiktok-progress'; bar.setAttribute('aria-label', `Tiến độ ${Math.round(percent)}%`);
+    const fill = document.createElement('i'); fill.style.width = `${percent}%`; bar.append(fill);
+    const updated = document.createElement('span'); updated.className = 'tiktok-publish-line'; updated.textContent = `Cập nhật: ${tikTok.updated_at || '—'}`;
+    const attempt = document.createElement('span'); attempt.className = 'tiktok-publish-line'; attempt.textContent = `Attempt: ${tikTok.attempt_count || 0}/1`;
+    const browser = document.createElement('span'); browser.className = 'tiktok-publish-line'; browser.textContent = `Browser: ${['VALIDATING','IDENTITY_CHECK','OPENING_BROWSER','UPLOADING','CONFIGURING_POST','POSTING','VERIFYING','READY_TO_POST'].includes(tikTok.status) ? 'RUNNING' : 'STOPPED'}`;
+    const cdp = document.createElement('span'); cdp.className = 'tiktok-publish-line'; cdp.textContent = `CDP: ${['SESSION_LOST_BEFORE_POST','CDP_DISCONNECTED'].includes(tikTok.current_step) || (tikTok.failure_reason || '').includes('CDP_DISCONNECTED') ? 'DISCONNECTED' : (tikTok.status === 'READY_TO_POST' ? 'CONNECTED' : '—')}`;
+    const waiting = document.createElement('span'); waiting.className = 'tiktok-publish-line'; waiting.textContent = `Waiting for confirmation: ${tikTok.status === 'READY_TO_POST' ? 'YES' : 'NO'}`;
+    const pid = document.createElement('span'); pid.className = 'tiktok-publish-line'; pid.textContent = 'Browser PID: —';
+    const lastEvent = document.createElement('span'); lastEvent.className = 'tiktok-publish-line'; lastEvent.textContent = `Last event: ${step}`;
+    box.append(title, status, attempt, browser, cdp, waiting, pid, current, progress, bar, updated, lastEvent);
+    if (tikTok.status === 'DONE') {
+      const profile = minhaProfiles.find(item => item.id === tikTok.minha_profile_id);
+      const posted = document.createElement('span'); posted.className = 'tiktok-publish-line';
+      posted.textContent = `✅ ĐÃ ĐĂNG · @${tikTok.tiktok_username || '—'} · ${profile?.name || tikTok.minha_profile_id || '—'} · ${tikTok.receipt_posted_at || tikTok.updated_at || '—'}${tikTok.receipt_post_url || tikTok.receipt_post_id ? ` · ${tikTok.receipt_post_url || tikTok.receipt_post_id}` : ''}`;
+      box.append(posted);
+      const verification = document.createElement('span'); verification.className = 'tiktok-publish-line';
+      verification.textContent = `Xác minh: ${tikTok.verification_method || '—'} · Post ID/URL: ${tikTok.receipt_post_id || tikTok.receipt_post_url || '—'}`;
+      box.append(verification);
+    } else if (tikTok.status === 'POST_RESULT_UNCERTAIN') {
+      const uncertain = document.createElement('span'); uncertain.className = 'tiktok-publish-error';
+      uncertain.textContent = '⚠ POST RESULT UNCERTAIN — KHÔNG TỰ ĐỘNG THỬ LẠI'; box.append(uncertain);
+    } else if (tikTok.failure_reason) {
+      const error = document.createElement('span'); error.className = 'tiktok-publish-error'; error.textContent = `Lỗi: ${tikTok.failure_reason}`; box.append(error);
+    }
+    return box;
+  }
+
   function jobCard(job) {
     const row = document.createElement('div'); row.className = 'job';
-    const owner = teamMembers.find(member => member.id === (job.owner_id || teamMembers[0]?.id));
-    const channel = document.createElement('strong'); channel.textContent = `${job.channel_name} · ${owner?.display_name || 'Legacy'}`;
+    const channel = document.createElement('strong'); channel.textContent = job.channel_name;
     const video = document.createElement('span'); video.textContent = job.video_title || job.video_id;
     const jobError = job.status === 'CANCELLED' ? 'USER_REQUEST' : job.process_error || job.download_error || job.error;
     const status = document.createElement('span'); status.textContent = jobError ? `${job.status}: ${jobError}` : job.status;
@@ -227,6 +267,29 @@
       const retry = document.createElement('button'); retry.textContent = 'Retry NAS Sync';
       retry.onclick = async () => { await request(`/api/jobs/${job.id}/retry-nas-sync`, {method:'POST'}); await refresh(); };
       nas.append(document.createElement('br'), retry);
+    }
+    const publish = renderTikTokPublish(job.tiktok_publish);
+    if (false) {
+    const publishLabels = {
+      CONNECT_CDP:'CONNECTING', PAGE_FOUND:'CONNECTING', UPLOAD_PAGE_OPEN:'OPENING UPLOAD',
+      WAIT_FILE_INPUT:'SELECTING VIDEO', FILE_INPUT_FOUND:'SELECTING VIDEO',
+      SET_INPUT_FILES_START:'SELECTING VIDEO', SET_INPUT_FILES_DONE:'SELECTING VIDEO',
+      UPLOAD_STARTED:'UPLOADING', UPLOAD_PROGRESS:'UPLOADING', UPLOAD_COMPLETE:'CONFIGURING',
+      QUEUED:'WAITING', VALIDATING:'WAITING', IDENTITY_CHECK:'WAITING', OPENING_BROWSER:'WAITING',
+      READY_FOR_POST:'WAITING', UPLOADING:'UPLOADING', CONFIGURING_POST:'UPLOADING',
+      POSTING:'POSTING', VERIFYING:'POSTING', DONE:'POSTED', BLOCKED:'BLOCKED', FAILED:'FAILED',
+      POST_RESULT_UNCERTAIN:'POST_RESULT_UNCERTAIN'
+    };
+    const tikTok = job.tiktok_publish;
+    const liveStep = tikTok?.current_step || tikTok?.status;
+    const liveLabel = publishLabels[liveStep] || liveStep;
+    publish.textContent = `TikTok: ${tikTok ? (liveLabel || '—') : '—'}`;
+    if (tikTok?.progress_percent) publish.textContent += ` ${Math.round(tikTok.progress_percent)}%`;
+    if (tikTok?.status === 'DONE') {
+      const postRef = tikTok.receipt_post_url || tikTok.receipt_post_id;
+      const profile = minhaProfiles.find(item => item.id === tikTok.minha_profile_id);
+      publish.textContent += ` · @${tikTok.tiktok_username} · ${profile?.name || tikTok.minha_profile_id} · ${formatTime(tikTok.receipt_posted_at)}${postRef ? ` · ${postRef}` : ''}`;
+    } else if (tikTok?.failure_reason) publish.textContent += ` · ${tikTok.failure_reason}`;
     }
     const output = document.createElement('span'); output.className = 'muted'; output.textContent = job.processing_output_dir || job.output_dir || '—';
     const created = document.createElement('span'); created.className = 'muted'; created.textContent = formatTime(job.created_at);
@@ -258,37 +321,25 @@
       };
       actions.append(clear);
     }
-    row.append(channel, video, status, download, processing, nas, output, created, actions); return row;
+    row.append(channel, video, status, download, processing, nas, publish, output, created, actions); return row;
   }
 
   async function refresh() {
     try {
-      const [status, members, channels, jobs, control, profiles] = await Promise.all([
-        request('/api/status'), request('/api/team-members'), request('/api/channels'),
-        request('/api/jobs'), request('/api/processing-control'),
+      const [status, channels, jobs, profiles] = await Promise.all([
+        request('/api/status'), request('/api/channels'),
+        request('/api/jobs'),
         request('/api/minha/profiles').catch(() => null),
       ]);
-      teamMembers = members;
-      processingControl = control;
       minhaAvailable = profiles !== null;
       minhaProfiles = profiles || [];
-      if (!activeOwner) activeOwner = members[0].id;
-      const tabs = document.querySelector('#team-tabs');
-      tabs.replaceChildren(...members.map(member => { const button = document.createElement('button'); button.textContent = member.display_name; button.classList.toggle('active', activeOwner === member.id); button.onclick = () => { activeOwner = member.id; refresh(); }; return button; }));
       document.querySelector('#interval').textContent = `${status.poll_interval_seconds}s`;
       document.querySelector('#ytdlp').textContent = status.ytdlp;
       document.querySelector('#telegram').textContent = status.telegram;
       document.querySelector('#enabled').textContent = status.enabled_channels;
-      const legacy = status.legacy_notify_migration;
-      document.querySelector('#migration-warning').textContent = legacy?.unresolved ? `${legacy.unresolved} kênh Notify cũ chưa xác định member; dữ liệu vẫn được giữ an toàn.` : '';
-      const engine = document.querySelector('#engine-toggle');
-      engine.textContent = control.silence_engine_enabled ? `ON / ${control.qwen_status}` : control.qwen_status === 'OFF' ? 'OFF' : `OFF / ${control.qwen_status}`;
-      engine.className = control.qwen_status === 'ERROR' ? 'engine-error' : control.silence_engine_enabled ? 'engine-on' : 'engine-off';
-      engine.disabled = engineRequestInFlight || control.qwen_status === 'STOPPING';
-      document.querySelector('#engine-error').textContent = control.qwen_status === 'ERROR' ? String(control.error || 'QWEN_ERROR').split(/\r?\n/, 1)[0].slice(0, 160) : '';
-      document.querySelector('#engine-waiting').textContent = `Đang chờ: ${control.waiting_jobs} video`;
-      const ownedChannels = channels.filter(channel => channel.owner_id === activeOwner);
-      const ownedJobs = jobs.filter(job => (job.owner_id || members[0].id) === activeOwner);
+      document.querySelector('#migration-warning').textContent = '';
+      const ownedChannels = channels;
+      const ownedJobs = jobs;
       list.replaceChildren(...(ownedChannels.length ? ownedChannels.map(channelCard) : [Object.assign(document.createElement('div'), {className:'empty', textContent:'Chưa có kênh nào.'})]));
       jobsList.replaceChildren(...(ownedJobs.length ? ownedJobs.map(jobCard) : [Object.assign(document.createElement('div'), {className:'empty', textContent:'Chưa có job nào.'})]));
     } catch (error) {
@@ -305,19 +356,21 @@
       await refresh();
     } catch (failure) { showNotice(failure.message); }
   };
-  document.querySelector('#engine-toggle').onclick = async () => {
-    if (!processingControl || engineRequestInFlight || processingControl.qwen_status === 'STOPPING') return;
-    const enable = !processingControl.silence_engine_enabled;
-    engineRequestInFlight = true;
-    document.querySelector('#engine-toggle').disabled = true;
+  document.querySelector('#clear-completed').onclick = async () => {
+    if (!confirm('Xóa toàn bộ lịch sử job?')) return;
     try {
-      processingControl = await request('/api/processing-control', {method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({silence_engine_enabled:enable})});
+      const result = await request('/api/jobs/clear-completed', {method:'POST'});
+      showNotice(`Đã xóa ${result.cleared} job lịch sử.`);
       await refresh();
     } catch (failure) { showNotice(failure.message); }
-    finally {
-      engineRequestInFlight = false;
-      document.querySelector('#engine-toggle').disabled = processingControl?.qwen_status === 'STOPPING';
-    }
+  };
+  const clearFailed = document.querySelector('#clear-failed'); if (clearFailed) clearFailed.onclick = async () => {
+    if (!confirm('Xóa các job lỗi hoặc bị chặn? Job đang chạy và kết quả chưa xác định sẽ được giữ lại.')) return;
+    try {
+      const result = await request('/api/jobs/clear-failed', {method:'POST'});
+      showNotice(`Đã xóa ${result.cleared} job lỗi.`);
+      await refresh();
+    } catch (failure) { showNotice(failure.message); }
   };
   document.querySelector('#rename-cancel').onclick = () => document.querySelector('#rename-dialog').close();
   document.querySelector('#rename-form').onsubmit = async event => {
@@ -342,7 +395,7 @@
     try {
       const result = {total:0, added:0, existing:0, failed:0, results:[]};
       for (let offset = 0; offset < channels.length; offset += 20) {
-        const batch = await request('/api/channels/bulk', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({channels:channels.slice(offset, offset + 20), owner_id:activeOwner})});
+        const batch = await request('/api/channels/bulk', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({channels:channels.slice(offset, offset + 20)})});
         for (const key of ['total', 'added', 'existing', 'failed']) result[key] += batch[key];
         result.results.push(...batch.results);
         submit.textContent = `Đang nhận diện ${Math.min(offset + 20, channels.length)} / ${channels.length}...`;

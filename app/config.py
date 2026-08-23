@@ -14,6 +14,35 @@ CHANNEL_ID_RE = re.compile(r"^UC[A-Za-z0-9_-]{22}$")
 TEAM_MEMBER_IDS = ("member_1", "member_2", "member_3", "member_4")
 
 
+def user_data_root() -> Path:
+    """Return the mutable per-user data directory for packaged installs.
+
+    Development keeps using the repository so existing workflows and tests are
+    unchanged.  The installer sets ``YT_NOTIFI_PACKAGED=1`` and optionally
+    ``YT_NOTIFI_DATA_DIR`` to move mutable state out of the install directory.
+    """
+    if os.getenv("YT_NOTIFI_PACKAGED", "").strip() != "1":
+        return ROOT
+    configured = os.getenv("YT_NOTIFI_DATA_DIR", "").strip()
+    if configured:
+        return Path(configured).expanduser().resolve()
+    local_app_data = os.getenv("LOCALAPPDATA", "").strip()
+    if local_app_data:
+        return (Path(local_app_data) / "YT_NOTIFI").resolve()
+    return (Path.home() / "AppData" / "Local" / "YT_NOTIFI").resolve()
+
+
+def ensure_user_data_layout(data_root: Path) -> None:
+    """Create packaged data folders and seed only safe, non-secret defaults."""
+    for folder in (data_root, data_root / "config", data_root / "state", data_root / "logs"):
+        folder.mkdir(parents=True, exist_ok=True)
+    for name in ("channels.json", "team_members.json"):
+        target = data_root / "config" / name
+        seed = ROOT / "config" / name
+        if not target.exists() and seed.is_file():
+            shutil.copy2(seed, target)
+
+
 @dataclass(frozen=True)
 class Settings:
     telegram_bot_token: str = ""
@@ -36,6 +65,8 @@ class Settings:
     ytdownload_bridge_url: str = "http://127.0.0.1:8790"
     processing_work_root: Path | None = None
     silence_cutter_bridge_url: str = "http://127.0.0.1:8791"
+    silence_cutter_lan_url: str = ""
+    silence_cutter_lan_token: str = ""
     minha_base_url: str = "http://127.0.0.1:8080"
     minha_auth_token: str = ""
     silence_cutter_root: Path = ROOT.parent / "Silence_cutter"
@@ -44,7 +75,17 @@ class Settings:
 
     @classmethod
     def from_env(cls) -> "Settings":
+        data_root = user_data_root()
+        if os.getenv("YT_NOTIFI_PACKAGED", "").strip() == "1":
+            ensure_user_data_layout(data_root)
+        # The persisted per-user file is authoritative.  ``override=True``
+        # matters after a restart because launchers often export empty
+        # placeholder variables that would otherwise hide the saved token.
         load_dotenv(ROOT / ".env")
+        if os.getenv("YT_NOTIFI_PACKAGED", "").strip() == "1":
+            load_dotenv(data_root / ".env", override=True)
+        config_root = data_root / "config"
+        state_root = data_root / "state"
         nas_output_root = os.getenv("NAS_OUTPUT_ROOT", "").strip()
         processing_work_root = os.getenv("PROCESSING_WORK_ROOT", "").strip()
         fallback_root = os.getenv("LOCAL_OUTPUT_FALLBACK_ROOT", "").strip() or r"F:\ContentOpsFallback"
@@ -53,14 +94,14 @@ class Settings:
             telegram_chat_id=os.getenv("TELEGRAM_CHAT_ID", ""),
             host=os.getenv("YT_NOTIFI_BIND_HOST", os.getenv("HOST", "127.0.0.1")),
             port=int(os.getenv("YT_NOTIFI_PORT", os.getenv("PORT", "8787"))),
-            channels_file=Path(os.getenv("CHANNELS_FILE", ROOT / "config" / "channels.json")),
-            team_members_file=Path(os.getenv("TEAM_MEMBERS_FILE", ROOT / "config" / "team_members.json")),
-            state_db=Path(os.getenv("STATE_DB", ROOT / "state" / "yt_notifi.db")),
+            channels_file=Path(os.getenv("CHANNELS_FILE", config_root / "channels.json")),
+            team_members_file=Path(os.getenv("TEAM_MEMBERS_FILE", config_root / "team_members.json")),
+            state_db=Path(os.getenv("STATE_DB", state_root / "yt_notifi.db")),
             processing_control_file=Path(os.getenv(
-                "PROCESSING_CONTROL_FILE", ROOT / "state" / "processing-control.json"
+                "PROCESSING_CONTROL_FILE", state_root / "processing-control.json"
             )),
             production_runtime_file=Path(os.getenv(
-                "PRODUCTION_RUNTIME_FILE", ROOT / "state" / "production-runtime.json"
+                "PRODUCTION_RUNTIME_FILE", state_root / "production-runtime.json"
             )),
             ytdlp_path=os.getenv("YTDLP_PATH", ""),
             poll_interval_seconds=max(1, int(os.getenv("POLL_INTERVAL_SECONDS", "10"))),
@@ -72,6 +113,8 @@ class Settings:
             ytdownload_bridge_url=os.getenv("YTDOWNLOAD_BRIDGE_URL", "http://127.0.0.1:8790").rstrip("/"),
             processing_work_root=Path(processing_work_root) if processing_work_root else None,
             silence_cutter_bridge_url=os.getenv("SILENCE_CUTTER_BRIDGE_URL", "http://127.0.0.1:8791").rstrip("/"),
+            silence_cutter_lan_url=os.getenv("SILENCE_CUTTER_LAN_URL", "").rstrip("/"),
+            silence_cutter_lan_token=os.getenv("SILENCE_CUTTER_LAN_TOKEN", ""),
             minha_base_url=os.getenv("MINHA_BASE_URL", "http://127.0.0.1:8080").rstrip("/"),
             minha_auth_token=os.getenv("MINHA_AUTH_TOKEN", ""),
             silence_cutter_root=Path(os.getenv("SILENCE_CUTTER_ROOT", ROOT.parent / "Silence_cutter")),
@@ -87,8 +130,8 @@ class Channel:
     channel_id: str
     name: str
     enabled: bool = True
-    owner_id: str = "member_1"
-    cut_enabled: bool = True
+    owner_id: str = ""
+    cut_enabled: bool = False
     minha_profile_id: str | None = None
 
 
@@ -131,7 +174,7 @@ def load_team_members(path: Path = ROOT / "config" / "team_members.json") -> lis
     return _validate_team_members(json.loads(path.read_text(encoding="utf-8")))
 
 
-def load_channels(path: Path, owner_ids: set[str] | None = None, default_owner: str = "member_1") -> list[Channel]:
+def load_channels(path: Path, owner_ids: set[str] | None = None, default_owner: str = "") -> list[Channel]:
     data = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(data, list):
         raise ValueError("channels.json must contain a JSON array")
@@ -145,7 +188,7 @@ def load_channels(path: Path, owner_ids: set[str] | None = None, default_owner: 
             raise ValueError(f"Invalid owner_id: {owner_id!r}")
         channels.append(Channel(
             channel_id, str(item.get("name") or channel_id), bool(item.get("enabled", True)),
-            owner_id, bool(item.get("cut_enabled", True)),
+            owner_id, bool(item.get("cut_enabled", False)),
             str(item["minha_profile_id"]) if item.get("minha_profile_id") else None,
         ))
     return channels

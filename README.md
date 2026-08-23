@@ -132,3 +132,14 @@ Log mới nằm trong `logs/yt_notifi.log` và tập trung vào `POLL_BASELINE`,
 - Telegram lỗi tạm thời được retry có giới hạn. SQLite ngăn cùng `video_id` tạo thông báo mới lần hai.
 - Bảng WebSub cũ trong database được giữ nguyên để tránh migration phá dữ liệu, nhưng runtime không còn đọc hoặc ghi bảng đó.
 - Dashboard và API chỉ được phục vụ qua watcher mặc định bind `127.0.0.1`; không đổi `HOST` thành `0.0.0.0` nếu không tự bổ sung bảo vệ truy cập.
+# Kiến trúc ContentOps cục bộ
+
+Các cổng cố định:
+
+- YT_NOTIFI: `127.0.0.1:8787`
+- Manual LAN API: `:8780` (chỉ job thủ công/phục hồi)
+- YTDOWNLOAD: `127.0.0.1:8790`
+- Silence Scheduler: `127.0.0.1:8791`
+- Qwen Worker: `127.0.0.1:8792`
+
+Job tự động đi theo `YT_NOTIFI → YTDOWNLOAD → Silence Scheduler`. Job thủ công đi từ Manual LAN API vào cùng scheduler. Chỉ scheduler được gọi Qwen; YT_NOTIFI không dùng `:8780` cho job tự động và không gọi trực tiếp `:8792`.

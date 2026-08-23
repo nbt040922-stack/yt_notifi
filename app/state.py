@@ -55,6 +55,7 @@ class StateStore:
                 "notification_last_error": "TEXT",
                 "detection_source": "TEXT NOT NULL DEFAULT 'poll'",
                 "baseline": "INTEGER NOT NULL DEFAULT 0",
+                "notification_ready": "INTEGER NOT NULL DEFAULT 1",
             }
             for name, sql_type in additions.items():
                 if name not in video_columns:
@@ -194,7 +195,7 @@ class StateStore:
             db.execute("UPDATE processing_jobs SET processing_output_dir=output_dir WHERE processing_output_dir IS NULL AND status IN ('COMPLETED','FAILED')")
             db.execute("UPDATE processing_jobs SET nas_sync_state='NOT_REQUIRED' WHERE nas_sync_state IS NULL AND status IN ('COMPLETED','FAILED')")
 
-    def record_event(self, event: VideoEvent, baseline: bool = False) -> bool:
+    def record_event(self, event: VideoEvent, baseline: bool = False, notification_ready: bool = True) -> bool:
         now = datetime.now(timezone.utc)
         published = parse_utc(event.published)
         latency = (now - published).total_seconds() if published else None
@@ -205,9 +206,10 @@ class StateStore:
             cursor = db.execute(
                 """INSERT OR IGNORE INTO videos
                    (video_id, channel_id, title, published_at, first_seen_at, last_seen_at,
-                    detected_at, detection_latency_seconds, detection_source, baseline)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (event.video_id, event.channel_id, event.title, event.published, now_text, now_text, now_text, latency, event.source, int(baseline)),
+                    detected_at, detection_latency_seconds, detection_source, baseline, notification_ready)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (event.video_id, event.channel_id, event.title, event.published, now_text, now_text,
+                 now_text, latency, event.source, int(baseline), int(notification_ready)),
             )
             is_new = cursor.rowcount == 1
             if not is_new:
@@ -231,7 +233,11 @@ class StateStore:
 
     def pending_notifications(self) -> list[sqlite3.Row]:
         with self._connect() as db:
-            return list(db.execute("SELECT * FROM videos WHERE notification_sent=0 AND notification_attempts BETWEEN 1 AND 2"))
+            return list(db.execute("SELECT * FROM videos WHERE notification_ready=1 AND notification_sent=0 AND notification_attempts BETWEEN 1 AND 2"))
+
+    def release_notification(self, video_id: str) -> None:
+        with self._connect() as db:
+            db.execute("UPDATE videos SET notification_ready=1 WHERE video_id=?", (video_id,))
 
     def create_processing_job(
         self,
@@ -318,6 +324,37 @@ class StateStore:
                 return "JOB_NOT_CLEARABLE"
             db.execute("DELETE FROM processing_jobs WHERE id=?", (job_id,))
             return "CLEARED"
+
+    def clear_failed_jobs(self) -> int:
+        """Remove only terminal processing history; active jobs stay untouched."""
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            rows = db.execute(
+                "SELECT id FROM processing_jobs WHERE status IN ('FAILED','CANCELLED')"
+            ).fetchall()
+            ids = [row["id"] for row in rows]
+            if ids:
+                marks = ",".join("?" for _ in ids)
+                db.execute(f"DELETE FROM processing_jobs WHERE id IN ({marks})", ids)
+            return len(ids)
+
+    def clear_history(self) -> int:
+        """Clear all non-active processing history in one operation."""
+        active = (
+            "QUEUED", "DOWNLOAD_PENDING", "DOWNLOADING", "DOWNLOADED",
+            "PROCESS_PENDING", "PROCESSING", "CLEANUP_PENDING", "CLEANING",
+        )
+        marks = ",".join("?" for _ in active)
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            rows = db.execute(
+                f"SELECT id FROM processing_jobs WHERE status NOT IN ({marks})", active
+            ).fetchall()
+            ids = [row["id"] for row in rows]
+            if ids:
+                id_marks = ",".join("?" for _ in ids)
+                db.execute(f"DELETE FROM processing_jobs WHERE id IN ({id_marks})", ids)
+            return len(ids)
 
     def cancel_processing_job(self, job_id: int) -> str:
         with self._connect() as db:
