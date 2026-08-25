@@ -495,6 +495,7 @@ class StateStore:
         download_state: str | None = None,
         progress: float = 0,
         downloaded_file_path: str | None = None,
+        video_title: str | None = None,
         download_error: str | None = None,
         attempts: int = 0,
         next_attempt_at: str | None = None,
@@ -504,10 +505,11 @@ class StateStore:
                 """UPDATE processing_jobs SET status=?,
                    download_external_id=COALESCE(?, download_external_id), download_state=?,
                    download_progress=?, downloaded_file_path=COALESCE(?, downloaded_file_path),
+                   video_title=COALESCE(?, video_title),
                    download_error=?, updated_at=?, download_attempts=?, next_download_attempt_at=?
                    WHERE id=? AND cancel_requested=0 AND status!='CANCELLED'""",
                 (status, external_id, download_state, progress, downloaded_file_path,
-                 download_error, utc_now(), attempts, next_attempt_at, job_id),
+                 video_title, download_error, utc_now(), attempts, next_attempt_at, job_id),
             )
 
     def process_jobs_due(self, now: str) -> list[sqlite3.Row]:

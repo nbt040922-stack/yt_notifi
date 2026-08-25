@@ -92,6 +92,7 @@ class DownloadHandoffWorker:
             return self.state.update_download_job(
                 job["id"], status="DOWNLOADED", external_id=external_id,
                 download_state=download_state, progress=100, downloaded_file_path=exact_path,
+                video_title=str(payload.get("title") or "").strip() or None,
             )
         if download_state in {"FAILED", "CANCELLED"}:
             return self._failed(job, str(payload.get("error") or download_state), download_state, external_id)

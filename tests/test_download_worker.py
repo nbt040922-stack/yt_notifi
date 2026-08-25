@@ -132,6 +132,19 @@ def test_done_saves_exact_downloaded_path(settings, tmp_path):
     assert (job["status"], job["downloaded_file_path"]) == ("DOWNLOADED", exact)
 
 
+def test_done_prefers_downloader_metadata_title(settings, tmp_path):
+    settings, state = queued_job(settings, tmp_path)
+    exact = str(tmp_path / "work" / "1" / "source.mp4")
+    DownloadHandoffWorker(
+        settings, state, Bridge([Response(payload(
+            "DONE", downloaded_file_path=exact,
+            title="【コストコ】日本語タイトル",
+        ))])
+    ).tick()
+    job = state.processing_jobs()[0]
+    assert job["video_title"] == "【コストコ】日本語タイトル"
+
+
 @pytest.mark.parametrize("remote", ["FAILED", "CANCELLED"])
 def test_terminal_bridge_state_fails_job(settings, tmp_path, remote):
     settings, state = queued_job(settings, tmp_path)
