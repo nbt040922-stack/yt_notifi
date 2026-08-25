@@ -84,11 +84,13 @@ class Settings:
         load_dotenv(ROOT / ".env")
         if os.getenv("YT_NOTIFI_PACKAGED", "").strip() == "1":
             load_dotenv(data_root / ".env", override=True)
+            load_dotenv(data_root / "config" / ".env", override=True)
         config_root = data_root / "config"
         state_root = data_root / "state"
         nas_output_root = os.getenv("NAS_OUTPUT_ROOT", "").strip()
         processing_work_root = os.getenv("PROCESSING_WORK_ROOT", "").strip()
-        fallback_root = os.getenv("LOCAL_OUTPUT_FALLBACK_ROOT", "").strip() or r"F:\ContentOpsFallback"
+        packaged_fallback = Path(os.getenv("PROGRAMDATA", Path.home() / "AppData" / "Local")) / "ContentOps" / "Client" / "fallback"
+        fallback_root = os.getenv("LOCAL_OUTPUT_FALLBACK_ROOT", "").strip() or (str(packaged_fallback) if os.getenv("YT_NOTIFI_PACKAGED", "").strip() == "1" else r"F:\ContentOpsFallback")
         return cls(
             telegram_bot_token=os.getenv("TELEGRAM_BOT_TOKEN", ""),
             telegram_chat_id=os.getenv("TELEGRAM_CHAT_ID", ""),

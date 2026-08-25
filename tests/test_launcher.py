@@ -31,6 +31,24 @@ def test_launcher_project_root_resolution():
     assert result.stdout.strip() == str(ROOT)
 
 
+def test_production_launcher_does_not_take_yt_notifi_down_when_ytdownload_exits():
+    script = (ROOT / "scripts" / "start_production.ps1").read_text(encoding="utf-8")
+    assert 'throw "Owned service exited pid=$($service.Id)"' not in script
+    assert "YTDOWNLOAD" in script and "YT_NOTIFI" in script
+
+
+def test_three_independent_supervisors_have_one_health_endpoint_each():
+    root = ROOT / "scripts"
+    for name, port in (("supervise_yt_notifi.ps1", "8787"), ("supervise_ytdownload.ps1", "8790"), ("supervise_silence.ps1", "8791")):
+        text = (root / name).read_text(encoding="utf-8")
+        assert port in text
+        assert "Watch-Service" in text
+    watcher = (root / "Watch-Service.ps1").read_text(encoding="utf-8")
+    assert "Invoke-RestMethod" in watcher
+    assert "Restart" in watcher
+    assert "Start-ThreeSupervisors.ps1" in (root / "start_production_hidden.vbs").read_text(encoding="utf-8")
+
+
 def test_launcher_venv_missing_is_explicit(tmp_path):
     result = ps(
         f"try {{ Get-VenvPython '{quoted(tmp_path)}' }} catch {{ $_.Exception.Message }}"

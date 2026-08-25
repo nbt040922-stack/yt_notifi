@@ -89,9 +89,9 @@ class ProcessHandoffWorker:
             if callable(health_method):
                 payload = health_method()
                 if isinstance(payload, dict) and payload.get("status") in {"READY", "ok"}:
-                    if payload.get("enhanced_ready", True):
-                        return True, ""
-                    return False, "BRIDGE_NOT_READY:QWEN_NOT_READY"
+                    # Qwen is optional.  Silence bridge can run its normal
+                    # audio/format pipeline with enhanced mode fail-open.
+                    return True, ""
                 return False, f"BRIDGE_NOT_READY:{(payload or {}).get('status', 'UNKNOWN')}"
             response = self.client.get(f"{self.bridge_url}/health")
             try:
@@ -99,9 +99,8 @@ class ProcessHandoffWorker:
             except Exception:
                 payload = {}
             if response.status_code == 200 and payload.get("status") in {"READY", "ok"}:
-                if payload.get("enhanced_ready", True):
-                    return True, ""
-                return False, "BRIDGE_NOT_READY:QWEN_NOT_READY"
+                # Do not gate processing on the optional Qwen worker.
+                return True, ""
             return False, f"BRIDGE_NOT_READY:{payload.get('status') or response.status_code}"
         except Exception:
             return False, "BRIDGE_NOT_READY:UNREACHABLE"

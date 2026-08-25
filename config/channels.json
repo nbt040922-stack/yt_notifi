@@ -4,15 +4,7 @@
     "name": "006US",
     "enabled": true,
     "owner_id": "",
-    "cut_enabled": true,
-    "minha_profile_id": null
-  },
-  {
-    "channel_id": "UCqRGR-9fqYzhDAzccsoVjBA",
-    "name": "007US",
-    "enabled": true,
-    "owner_id": "",
-    "cut_enabled": true,
+    "cut_enabled": false,
     "minha_profile_id": null
   },
   {
@@ -20,15 +12,15 @@
     "name": "008US",
     "enabled": true,
     "owner_id": "",
-    "cut_enabled": true,
+    "cut_enabled": false,
     "minha_profile_id": null
   },
   {
-    "channel_id": "UCAj7O3LCDbkIR54hAn6Zz7A",
-    "name": "009US",
+    "channel_id": "UCqRGR-9fqYzhDAzccsoVjBA",
+    "name": "007US",
     "enabled": true,
     "owner_id": "",
-    "cut_enabled": true,
+    "cut_enabled": false,
     "minha_profile_id": null
   },
   {
@@ -36,413 +28,309 @@
     "name": "010US",
     "enabled": true,
     "owner_id": "",
-    "cut_enabled": true,
+    "cut_enabled": false,
     "minha_profile_id": null
   },
   {
-    "channel_id": "UC7IoYYcmNrSg5GP31UCSsZA",
-    "name": "TN002UK",
+    "channel_id": "UCAj7O3LCDbkIR54hAn6Zz7A",
+    "name": "009US",
     "enabled": true,
     "owner_id": "",
-    "cut_enabled": true,
-    "minha_profile_id": null
-  },
-  {
-    "channel_id": "UCNiurMpWExWgio2lqldycbA",
-    "name": "TN003UK",
-    "enabled": true,
-    "owner_id": "",
-    "cut_enabled": true,
-    "minha_profile_id": null
-  },
-  {
-    "channel_id": "UC1zsShDyJp8AafQu9BPo1PQ",
-    "name": "TN005UK",
-    "enabled": true,
-    "owner_id": "",
-    "cut_enabled": true,
+    "cut_enabled": false,
     "minha_profile_id": null
   },
   {
     "channel_id": "UCvhkE6mhsYxdUXNjmJdtq_Q",
-    "name": "Wise Flys",
+    "name": "HN028",
     "enabled": true,
     "owner_id": "",
-    "cut_enabled": true,
+    "cut_enabled": false,
     "minha_profile_id": null
   },
   {
     "channel_id": "UCYqOP98j1cPqLzN2-AAgsHQ",
-    "name": "Blind to Billionaire",
+    "name": "HN023",
     "enabled": true,
     "owner_id": "",
-    "cut_enabled": true,
+    "cut_enabled": false,
     "minha_profile_id": null
   },
   {
     "channel_id": "UCou-9ixmPuPQ0uMYjL7aOdA",
-    "name": "Dr. Ed Weir, PhD, Former Social Security Manager",
+    "name": "HN027",
     "enabled": true,
     "owner_id": "",
-    "cut_enabled": true,
+    "cut_enabled": false,
     "minha_profile_id": null
   },
   {
     "channel_id": "UCDOz1ZPlVR2OlHqR0TmflGg",
-    "name": "Sterling USA",
+    "name": "HN035",
     "enabled": true,
     "owner_id": "",
-    "cut_enabled": true,
+    "cut_enabled": false,
     "minha_profile_id": null
   },
   {
     "channel_id": "UCJJDL_QUjlrgY9LU_OcQe0g",
-    "name": "360 with Cyn and Scott",
+    "name": "HN016",
     "enabled": true,
     "owner_id": "",
-    "cut_enabled": true,
+    "cut_enabled": false,
     "minha_profile_id": null
   },
   {
     "channel_id": "UCkAd90Hai7IWvRtWaA25OLw",
-    "name": "Thrifty Tiffany",
+    "name": "HN020",
     "enabled": true,
     "owner_id": "",
-    "cut_enabled": true,
+    "cut_enabled": false,
     "minha_profile_id": null
   },
   {
     "channel_id": "UCIYx4Zm463zaczyOAyF0fjA",
-    "name": "Twisted Gypsy",
+    "name": "HN032",
     "enabled": true,
     "owner_id": "",
-    "cut_enabled": true,
+    "cut_enabled": false,
     "minha_profile_id": null
   },
   {
     "channel_id": "UCta2PYYrivng2z7kSGb7r2Q",
-    "name": "She So CraftDee",
+    "name": "HN021",
     "enabled": true,
     "owner_id": "",
-    "cut_enabled": true,
+    "cut_enabled": false,
     "minha_profile_id": null
   },
   {
     "channel_id": "UCP55X-D9LqBYTVW50ebq88Q",
-    "name": "Frugal Now Official",
+    "name": "HN014",
     "enabled": true,
     "owner_id": "",
-    "cut_enabled": true,
+    "cut_enabled": false,
     "minha_profile_id": null
   },
   {
     "channel_id": "UCvlWlnGWZPoxXKVbBiHGpcw",
-    "name": "Couponing For A Cause",
+    "name": "HN033",
     "enabled": true,
     "owner_id": "",
-    "cut_enabled": true,
+    "cut_enabled": false,
     "minha_profile_id": null
   },
   {
     "channel_id": "UCv2gNpccca7xm9JmA4Zyq6w",
-    "name": "Noni's Life",
+    "name": "HN017",
     "enabled": true,
     "owner_id": "",
-    "cut_enabled": true,
+    "cut_enabled": false,
     "minha_profile_id": null
   },
   {
     "channel_id": "UCvId7__YuPDXbrxJMCc8tMw",
-    "name": "ChiTownGirl",
+    "name": "HN013",
     "enabled": true,
     "owner_id": "",
-    "cut_enabled": true,
+    "cut_enabled": false,
     "minha_profile_id": null
   },
   {
     "channel_id": "UCZblNdFGEoSx9qW9V96t39w",
-    "name": "PrettyNflawed",
+    "name": "HN031",
     "enabled": true,
     "owner_id": "",
-    "cut_enabled": true,
+    "cut_enabled": false,
     "minha_profile_id": null
   },
   {
     "channel_id": "UCJA8OyDxRY-wm0ya2gtHOsw",
-    "name": "Do It On A Dime",
+    "name": "HN018",
     "enabled": true,
     "owner_id": "",
-    "cut_enabled": true,
+    "cut_enabled": false,
     "minha_profile_id": null
   },
   {
     "channel_id": "UCxjhOIpBVwAYqLEf0VjGjxg",
-    "name": "Body by Jenny",
+    "name": "HN025",
     "enabled": true,
     "owner_id": "",
-    "cut_enabled": true,
+    "cut_enabled": false,
     "minha_profile_id": null
   },
   {
-    "channel_id": "UCl7u_Hg2c7Wc4zdfW_KXw2g",
-    "name": "TeresaPlusFive",
-    "enabled": true,
+    "channel_id": "UCvb5PDOmJ6slwI1Ti7xagEg",
+    "name": "003UK",
+    "enabled": false,
     "owner_id": "",
-    "cut_enabled": true,
+    "cut_enabled": false,
     "minha_profile_id": null
   },
   {
-    "channel_id": "UCf1JbuFTMUfszYPlpL0sioA",
-    "name": "The Grocery Lady",
-    "enabled": true,
+    "channel_id": "UCrb8b5FERrTkxjwA3Ya5UCg",
+    "name": "004UK",
+    "enabled": false,
     "owner_id": "",
-    "cut_enabled": true,
+    "cut_enabled": false,
+    "minha_profile_id": null
+  },
+  {
+    "channel_id": "UC9NrE2wN9BO9TWYPhGADnHA",
+    "name": "007UK",
+    "enabled": false,
+    "owner_id": "",
+    "cut_enabled": false,
+    "minha_profile_id": null
+  },
+  {
+    "channel_id": "UCB4nWNauim-qxiaDOcH0dLA",
+    "name": "008UK",
+    "enabled": false,
+    "owner_id": "",
+    "cut_enabled": false,
+    "minha_profile_id": null
+  },
+  {
+    "channel_id": "UCRgDkBlJxt3t0axsKDtjwNQ",
+    "name": "011UK",
+    "enabled": false,
+    "owner_id": "",
+    "cut_enabled": false,
+    "minha_profile_id": null
+  },
+  {
+    "channel_id": "UCAlz-O5aYqN9KFsr-PIa0Kg",
+    "name": "012UK",
+    "enabled": false,
+    "owner_id": "",
+    "cut_enabled": false,
+    "minha_profile_id": null
+  },
+  {
+    "channel_id": "UC_vwEmL3xElTobLFHHROlMg",
+    "name": "015UK",
+    "enabled": false,
+    "owner_id": "",
+    "cut_enabled": false,
+    "minha_profile_id": null
+  },
+  {
+    "channel_id": "UCPgxTTX3kqkiVIn8bmbv0eQ",
+    "name": "016UK",
+    "enabled": false,
+    "owner_id": "",
+    "cut_enabled": false,
+    "minha_profile_id": null
+  },
+  {
+    "channel_id": "UCdZezez_ZRnKn0KEqqPUsmg",
+    "name": "019UK",
+    "enabled": false,
+    "owner_id": "",
+    "cut_enabled": false,
+    "minha_profile_id": null
+  },
+  {
+    "channel_id": "UC8iB4A0QWfbXuTUwg-TDMSw",
+    "name": "020UK",
+    "enabled": false,
+    "owner_id": "",
+    "cut_enabled": false,
+    "minha_profile_id": null
+  },
+  {
+    "channel_id": "UCb9ftg-OdsyfZHZO9gV9F0A",
+    "name": "023UK",
+    "enabled": false,
+    "owner_id": "",
+    "cut_enabled": false,
+    "minha_profile_id": null
+  },
+  {
+    "channel_id": "UCNuG8nL3ExIbYP4_wYBY9qg",
+    "name": "027UK",
+    "enabled": false,
+    "owner_id": "",
+    "cut_enabled": false,
     "minha_profile_id": null
   },
   {
     "channel_id": "UCkOSdTtgxpAUCnCLC6MEFyQ",
     "name": "23TN",
-    "enabled": true,
+    "enabled": false,
     "owner_id": "",
-    "cut_enabled": true,
+    "cut_enabled": false,
     "minha_profile_id": null
   },
   {
     "channel_id": "UCVvjgOCaCDrLST1XX1PMc1g",
     "name": "hiếu 10/MH0009US",
-    "enabled": true,
+    "enabled": false,
     "owner_id": "",
-    "cut_enabled": true,
+    "cut_enabled": false,
     "minha_profile_id": null
   },
   {
     "channel_id": "UCSbSvTMZ4NXg7WuL1MkIXow",
     "name": "102TN",
-    "enabled": true,
+    "enabled": false,
     "owner_id": "",
-    "cut_enabled": true,
+    "cut_enabled": false,
     "minha_profile_id": null
   },
   {
     "channel_id": "UC5rIeuZd2x4rQd4iK14ImDA",
     "name": "ID004US",
-    "enabled": true,
+    "enabled": false,
     "owner_id": "",
-    "cut_enabled": true,
+    "cut_enabled": false,
     "minha_profile_id": null
   },
   {
     "channel_id": "UCdZsr87GGm6LQEfJfI-NP4g",
     "name": "Nhật3",
-    "enabled": true,
+    "enabled": false,
     "owner_id": "",
-    "cut_enabled": true,
+    "cut_enabled": false,
     "minha_profile_id": null
   },
   {
     "channel_id": "UCAl2nDkuAtqyRQllV6t9WBw",
     "name": "DA002/KBT",
-    "enabled": true,
+    "enabled": false,
     "owner_id": "",
-    "cut_enabled": true,
+    "cut_enabled": false,
     "minha_profile_id": null
   },
   {
     "channel_id": "UCidJftClM4kU1196YynvqXg",
     "name": "DA003/KBT",
-    "enabled": true,
+    "enabled": false,
     "owner_id": "",
-    "cut_enabled": true,
+    "cut_enabled": false,
     "minha_profile_id": null
   },
   {
     "channel_id": "UCIxmWUbe4OZuMDJKIHKwwKg",
     "name": "DA010/BKT",
-    "enabled": true,
+    "enabled": false,
     "owner_id": "",
-    "cut_enabled": true,
+    "cut_enabled": false,
     "minha_profile_id": null
   },
   {
     "channel_id": "UCGYPq3R0svmghelFj2pV70w",
     "name": "TN067/BKT",
-    "enabled": true,
+    "enabled": false,
     "owner_id": "",
-    "cut_enabled": true,
+    "cut_enabled": false,
     "minha_profile_id": null
   },
   {
     "channel_id": "UC24VHiKgpvHIzdoz_kusDrQ",
     "name": "DA016/BKT",
-    "enabled": true,
-    "owner_id": "",
-    "cut_enabled": true,
-    "minha_profile_id": null
-  },
-  {
-    "channel_id": "UCUSySH2YjIwsDu2Hx6DWwTA",
-    "name": "Jesse Dollemore",
-    "enabled": true,
-    "owner_id": "",
-    "cut_enabled": false,
-    "minha_profile_id": null
-  },
-  {
-    "channel_id": "UC5dUUCs748wCYQl682LX6bg",
-    "name": "Farron Balanced",
-    "enabled": true,
-    "owner_id": "",
-    "cut_enabled": false,
-    "minha_profile_id": null
-  },
-  {
-    "channel_id": "UCZ5cvDR2HhVUcdVoTvvQKLw",
-    "name": "I've Had It",
-    "enabled": true,
-    "owner_id": "",
-    "cut_enabled": false,
-    "minha_profile_id": null
-  },
-  {
-    "channel_id": "UCQANb2YPwAtK-IQJrLaaUFw",
-    "name": "Brian Tyler Cohen",
-    "enabled": true,
-    "owner_id": "",
-    "cut_enabled": false,
-    "minha_profile_id": null
-  },
-  {
-    "channel_id": "UCM05jgFNwoeXvWfO9GuExzA",
-    "name": "Luke Beasley",
-    "enabled": true,
-    "owner_id": "",
-    "cut_enabled": false,
-    "minha_profile_id": null
-  },
-  {
-    "channel_id": "UCl9roQQwv4o4OuBj3FhQdDQ",
-    "name": "The Damage Report",
-    "enabled": true,
-    "owner_id": "",
-    "cut_enabled": false,
-    "minha_profile_id": null
-  },
-  {
-    "channel_id": "UCo9oQdIk1MfcnzypG3UnURA",
-    "name": "The Rational National",
-    "enabled": true,
-    "owner_id": "",
-    "cut_enabled": false,
-    "minha_profile_id": null
-  },
-  {
-    "channel_id": "UCldfgbzNILYZA4dmDt4Cd6A",
-    "name": "Secular Talk",
-    "enabled": true,
-    "owner_id": "",
-    "cut_enabled": false,
-    "minha_profile_id": null
-  },
-  {
-    "channel_id": "UCvixJtaXuNdMPUGdOPcY8Ag",
-    "name": "David Pakman Show",
-    "enabled": true,
-    "owner_id": "",
-    "cut_enabled": false,
-    "minha_profile_id": null
-  },
-  {
-    "channel_id": "UC9r9HYFxEQOBXSopFS61ZWg",
-    "name": "MeidasTouch",
-    "enabled": true,
-    "owner_id": "",
-    "cut_enabled": false,
-    "minha_profile_id": null
-  },
-  {
-    "channel_id": "UCbjBOso0vpWgDht9dPIVwhQ",
-    "name": "Thom Hartmann Program",
-    "enabled": true,
-    "owner_id": "",
-    "cut_enabled": false,
-    "minha_profile_id": null
-  },
-  {
-    "channel_id": "UCYWIEbibRcZav6xMLo9qWWw",
-    "name": "The Ring of Fire",
-    "enabled": true,
-    "owner_id": "",
-    "cut_enabled": false,
-    "minha_profile_id": null
-  },
-  {
-    "channel_id": "UC-3jIAlnQmbbVMV6gR7K8aQ",
-    "name": "The Majority Report w/ Sam Seder",
-    "enabled": true,
-    "owner_id": "",
-    "cut_enabled": false,
-    "minha_profile_id": null
-  },
-  {
-    "channel_id": "UCtoaZpBnrd0lhycxYJ4MNOQ",
-    "name": "HasanAbi",
-    "enabled": true,
-    "owner_id": "",
-    "cut_enabled": false,
-    "minha_profile_id": null
-  },
-  {
-    "channel_id": "UCjXB7nX8bL2U2sje8d212Yw",
-    "name": "Roland S. Martin",
-    "enabled": true,
-    "owner_id": "",
-    "cut_enabled": false,
-    "minha_profile_id": null
-  },
-  {
-    "channel_id": "UC7pGyYaOMsJv1tlPNBgAG2Q",
-    "name": "The Emily Show",
-    "enabled": true,
-    "owner_id": "",
-    "cut_enabled": false,
-    "minha_profile_id": null
-  },
-  {
-    "channel_id": "UCaYw_yJ_YLPEv6zR2c7hgHA",
-    "name": "The Officer Tatum",
-    "enabled": true,
-    "owner_id": "",
-    "cut_enabled": false,
-    "minha_profile_id": null
-  },
-  {
-    "channel_id": "UCn_uMY15GlwaPpx80-WjR6g",
-    "name": "Occupy Democrats",
-    "enabled": true,
-    "owner_id": "",
-    "cut_enabled": false,
-    "minha_profile_id": null
-  },
-  {
-    "channel_id": "UCYp1p4KZdNQVaA5MKbQhCpg",
-    "name": "Ron Yates",
-    "enabled": true,
-    "owner_id": "",
-    "cut_enabled": false,
-    "minha_profile_id": null
-  },
-  {
-    "channel_id": "UC7ddSzBrkukSCJzMIXfGEdg",
-    "name": "Jack Cocchiarella",
-    "enabled": true,
-    "owner_id": "",
-    "cut_enabled": false,
-    "minha_profile_id": null
-  },
-  {
-    "channel_id": "UCZl9z2UMvN9mwpUoU9-E9bA",
-    "name": "Katie Phang",
-    "enabled": true,
+    "enabled": false,
     "owner_id": "",
     "cut_enabled": false,
     "minha_profile_id": null

@@ -1,0 +1,2 @@
+param([string]$Root = (Join-Path ${env:ProgramFiles} 'ContentOps\Client'),[string]$DataRoot = (Join-Path $env:ProgramData 'ContentOps\Client'))
+$runtime=Join-Path $DataRoot 'runtime'; foreach($name in 'yt_notifi','ytdownload'){$f=Join-Path $runtime "$name.pid"; if(Test-Path $f){$id=[int](Get-Content $f); $p=Get-Process -Id $id -ErrorAction SilentlyContinue; if($p){Stop-Process -Id $id -Force}; Remove-Item $f -Force}}

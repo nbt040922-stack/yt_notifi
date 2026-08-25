@@ -1,0 +1,19 @@
+{
+  "product": "ContentOps Client",
+  "version": "1.0.0",
+  "install_root": "C:\\ProgramData\\ContentOps\\Client",
+  "components": {
+    "yt_notifi": {
+      "port": 8787,
+      "health": "http://127.0.0.1:8787/health",
+      "entry": "yt_notifi\\yt_notifi_bootstrap.exe",
+      "workdir": "yt_notifi"
+    },
+    "ytdownload": {
+      "port": 8790,
+      "health": "http://127.0.0.1:8790/health",
+      "entry": "ytdownload\\YTDOWNLOAD.exe",
+      "workdir": "ytdownload"
+    }
+  }
+}

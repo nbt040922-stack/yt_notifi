@@ -16,6 +16,9 @@ $env:YT_NOTIFI_DATA_DIR = $dataRoot
 $env:YT_NOTIFI_BIND_HOST = if ($env:YT_NOTIFI_BIND_HOST) { $env:YT_NOTIFI_BIND_HOST } else { '0.0.0.0' }
 $env:CONTENTOPS_HEADLESS = '1'
 $env:CONTENTOPS_BRIDGE_PORT = '8790'
+$env:SILENCE_CUTTER_BRIDGE_URL = 'http://127.0.0.1:8791'
+$env:SILENCE_CUTTER_LAN_URL = ''
+$env:SILENCE_CUTTER_LAN_TOKEN = ''
 $backoff = @(2, 5, 15, 30, 60)
 $restartCount = 0
 while ($true) {
@@ -28,7 +31,10 @@ while ($true) {
     if (-not $bridgeReady) { Start-Sleep -Milliseconds 500 }
   }
   if (-not $bridgeReady) { Add-Content $log "$(Get-Date -Format o) YTDOWNLOAD_HEALTH_FAILED"; Stop-Process -Id $download.Id -Force -ErrorAction SilentlyContinue; $restartCount++; Start-Sleep -Seconds 5; continue }
-  $p = Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe) -PassThru -WindowStyle Hidden
+  # The launcher owns YTDOWNLOAD; bootstrap runs only the YT_NOTIFI worker.
+  # This preserves the proven old process topology and avoids a duplicate
+  # YTDOWNLOAD supervisor inside the frozen backend.
+  $p = Start-Process -FilePath $exe -ArgumentList @('--worker') -WorkingDirectory (Split-Path $exe) -PassThru -WindowStyle Hidden
   while ((Get-Process -Id $p.Id -ErrorAction SilentlyContinue) -and (Get-Process -Id $download.Id -ErrorAction SilentlyContinue)) { Start-Sleep -Seconds 2 }
   Add-Content $log "$(Get-Date -Format o) EXIT yt_notifi=$((Get-Process -Id $p.Id -ErrorAction SilentlyContinue) -eq $null) ytdownload=$((Get-Process -Id $download.Id -ErrorAction SilentlyContinue) -eq $null)"
   Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue

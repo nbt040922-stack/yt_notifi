@@ -171,10 +171,18 @@ class ProcessingControl:
 
     def is_ready(self) -> bool:
         value = self.store.read()
-        return bool(value["silence_engine_enabled"] and value.get("qwen_status") == "READY")
+        if not value["silence_engine_enabled"]:
+            return False
+        try:
+            health = self.manager.health()
+        except Exception:
+            health = None
+        # Qwen is optional.  The local Silence bridge is usable in its normal
+        # audio/format mode while Qwen is OFF.
+        return bool(health and health.get("status") in {"READY", "ok"})
 
     def pause_reason(self) -> str:
-        return "QWEN_NOT_READY" if self.store.read()["silence_engine_enabled"] else "SILENCE_ENGINE_DISABLED"
+        return "BRIDGE_NOT_READY" if self.store.read()["silence_engine_enabled"] else "SILENCE_ENGINE_DISABLED"
 
     def request(self, enabled: bool) -> dict[str, Any]:
         with self._lock:
@@ -207,8 +215,8 @@ class ProcessingControl:
             or health.get("enhanced_ready") is True
             or (health.get("model_loaded") and health.get("warmed_up"))
         )
-        if scheduler_ready and qwen_ready:
-            value.update(qwen_status="READY", error=None)
+        if scheduler_ready:
+            value.update(qwen_status="OFF", error=None)
             self.store.write(value)
             return
         status = str((health or {}).get("status") or "ERROR")

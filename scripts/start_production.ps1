@@ -85,18 +85,30 @@ function Assert-Healthy([Diagnostics.Process]$Process, [string]$Name, [string]$U
 
 function Assert-SilenceIdentity([string]$Url, [string]$ExpectedRoot, [string]$ExpectedPython) {
     $health = Invoke-RestMethod $Url -TimeoutSec 3
-    if ($health.status -ne "READY" -or
-        [IO.Path]::GetFullPath([string]$health.project_root) -ne [IO.Path]::GetFullPath($ExpectedRoot) -or
-        [IO.Path]::GetFullPath([string]$health.python_executable) -ne [IO.Path]::GetFullPath($ExpectedPython)) {
+    if ($health.status -notin @("READY", "ok")) {
         throw "SILENCE CUTTER identity mismatch"
     }
-    Write-LauncherLog $launcherLog "Silence identity PASS pid=$($health.bridge_pid) build=$($health.bridge_build)"
+    # Older bridge builds expose only status; do not take YT_NOTIFI down when
+    # optional identity metadata is absent.
+    $hasIdentity = $health.PSObject.Properties.Name -contains "project_root" -and
+        $health.PSObject.Properties.Name -contains "python_executable"
+    if ($hasIdentity) {
+        if ([IO.Path]::GetFullPath([string]$health.project_root) -ne [IO.Path]::GetFullPath($ExpectedRoot) -or
+            [IO.Path]::GetFullPath([string]$health.python_executable) -ne [IO.Path]::GetFullPath($ExpectedPython)) {
+            throw "SILENCE CUTTER identity mismatch"
+        }
+    }
+    $bridgePid = if ($health.PSObject.Properties.Name -contains "bridge_pid") { $health.bridge_pid } else { "unknown" }
+    $bridgeBuild = if ($health.PSObject.Properties.Name -contains "bridge_build") { $health.bridge_build } else { "unknown" }
+    Write-LauncherLog $launcherLog "Silence identity PASS pid=$bridgePid build=$bridgeBuild metadata=$hasIdentity"
 }
 
 try {
     Import-DotEnv (Join-Path $root ".env")
     $control = Read-RuntimeState $controlPath
-    $engineEnabled = $(if ($null -eq $control) { $true } else { [bool]$control.silence_engine_enabled })
+    # Qwen is no longer part of the production pipeline. Silence Cutter's
+    # normal audio/format path remains available on port 8791.
+    $engineEnabled = $false
     if ($StartupDelaySeconds) {
         Write-LauncherLog $launcherLog "startup delay seconds=$StartupDelaySeconds"
         Start-Sleep -Seconds $StartupDelaySeconds
@@ -126,7 +138,9 @@ try {
 
     if ($engineEnabled -and (Test-LocalPortListening 8792)) { throw "Qwen Worker port 8792 is already in use" }
     if (Test-LocalPortListening 8790) { throw "YTDOWNLOAD port 8790 is already in use" }
-    if (Test-LocalPortListening 8791) { throw "SILENCE CUTTER port 8791 is already in use" }
+    # Silence may be managed by its own bridge supervisor. Do not fail the
+    # YT_NOTIFI launcher merely because that independent service already owns
+    # 8791; health/identity verification below decides whether it is usable.
 
     if ($engineEnabled) {
         Write-LauncherLog $launcherLog "Starting Qwen Worker"
@@ -188,8 +202,18 @@ try {
 
     while ($true) {
         Start-Sleep -Seconds 2
-        foreach ($service in @($ytdownload, $silence, $watcher)) {
-            if ($service.HasExited) { throw "Owned service exited pid=$($service.Id)" }
+        # Service lifecycles are deliberately independent. A YTDOWNLOAD or
+        # Silence bridge crash must not tear down the healthy YT_NOTIFI API.
+        if ($ytdownload -and $ytdownload.HasExited) {
+            Write-LauncherLog $launcherLog "YTDOWNLOAD exited pid=$($ytdownload.Id) exit=$($ytdownload.ExitCode); keeping YT_NOTIFI alive"
+            $ytdownload = $null
+        }
+        if ($silence -and $silence.HasExited) {
+            Write-LauncherLog $launcherLog "Silence bridge exited pid=$($silence.Id) exit=$($silence.ExitCode); keeping YT_NOTIFI alive"
+            $silence = $null
+        }
+        if ($watcher -and $watcher.HasExited) {
+            throw "YT_NOTIFI exited pid=$($watcher.Id) exit=$($watcher.ExitCode)"
         }
     }
 } catch {
